@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Notes de frais</title>
+<style>
+  :root{
+    --ink:#1a1d1a;
+    --paper:#f7f5f0;
+    --paper-raised:#ffffff;
+    --line:#dcd8cc;
+    /* Les couleurs de categorie ne sont plus ici : chaque categorie porte sa
+       propre couleur via les variables --c (couleur) et --cbg (fond clair),
+       injectees en style inline depuis le tableau CATEGORIES du script. */
+    --accent:#2f6b4f;
+    --muted:#7a7568;
+    --danger:#b0392c;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Helvetica Neue',Arial,sans-serif;
+    min-height:100vh;
+    padding-bottom:90px;
+  }
+  .topbar{
+    position:sticky;top:0;z-index:10;
+    background:var(--paper);
+    border-bottom:1px solid var(--line);
+    padding:18px 20px 14px;
+  }
+  .topbar h1{
+    font-family:Georgia,'Times New Roman',serif;
+    font-size:22px;
+    font-weight:700;
+    margin:0 0 2px;
+    letter-spacing:-0.01em;
+  }
+  .topbar .sub{
+    font-size:12.5px;
+    color:var(--muted);
+  }
+  .totals{
+    /* Flex avec retour a la ligne plutot qu'une grille a nombre de colonnes fige :
+       les cartes de la derniere ligne s'etirent pour occuper toute la largeur,
+       donc ajouter une 5e ou 6e categorie ne laisse jamais de carte orpheline. */
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    padding:14px 20px 4px;
+  }
+  .total-card{
+    flex:1 1 140px;
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px 10px;
+    min-width:0;
+  }
+  /* Carte du total general : toujours seule sur sa ligne, en pleine largeur. */
+  .total-card.grand{
+    flex:1 1 100%;
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap:10px;
+    background:var(--ink);
+    border-color:var(--ink);
+    border-left-width:1px; /* annule le liseré de 4px des cartes de catégorie */
+  }
+  .total-card.grand .label{color:rgba(247,245,240,0.7);margin-bottom:0;}
+  .total-card.grand .amount{color:var(--paper);font-size:19px;}
+  .total-card{border-left:4px solid var(--c,var(--muted));}
+  .total-card .label{
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    color:var(--muted);
+    margin-bottom:4px;
+  }
+  .total-card .amount{
+    font-family:Georgia,serif;
+    font-size:17px;
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+  }
+  .list{
+    padding:8px 16px 20px;
+  }
+  .month-filter{
+    padding:10px 16px 0;
+  }
+  .month-filter select{
+    width:100%;padding:10px 12px;
+    border:1px solid var(--line);border-radius:8px;
+    font-size:14px;background:var(--paper-raised);color:var(--ink);
+    font-family:inherit;
+  }
+  .month-label{
+    font-size:12px;
+    color:var(--muted);
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    padding:16px 4px 8px;
+  }
+  .entry{
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px 14px;
+    margin-bottom:8px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    cursor:pointer;
+  }
+  .entry:active{background:#f2efe8;}
+  .entry .tag{
+    width:8px;height:8px;border-radius:50%;flex-shrink:0;
+  }
+  .entry .tag{background:var(--c,var(--muted));}
+  .entry .info{flex:1;min-width:0;}
+  .entry .info .top-row{
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  }
+  .entry .cat{
+    font-size:13px;font-weight:600;
+  }
+  .entry .cat{color:var(--c,var(--ink));}
+  .entry .amount{
+    font-family:Georgia,serif;font-size:16px;font-weight:700;
+    font-variant-numeric:tabular-nums;white-space:nowrap;
+  }
+  .entry .meta{
+    font-size:12px;color:var(--muted);margin-top:2px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .entry .del{
+    background:none;border:none;color:var(--muted);
+    font-size:18px;cursor:pointer;padding:4px 6px;line-height:1;
+    flex-shrink:0;
+  }
+  .entry .del:active{color:var(--danger);}
+  .empty-state{
+    text-align:center;padding:50px 30px;color:var(--muted);
+  }
+  .empty-state .icon{font-size:32px;margin-bottom:10px;}
+  .empty-state p{font-size:14px;margin:4px 0;}
+
+  .fab-bar{
+    position:fixed;bottom:0;left:0;right:0;
+    background:var(--paper-raised);
+    border-top:1px solid var(--line);
+    display:flex;gap:10px;
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    z-index:20;
+  }
+  .fab{
+    flex:1;
+    border:none;border-radius:10px;
+    padding:14px 0;
+    font-size:13px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;gap:5px;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  .fab.primary{background:var(--ink);color:var(--paper);flex:1.3;}
+  .fab.secondary{background:var(--paper);color:var(--ink);border:1px solid var(--line);}
+  .fab:active{opacity:0.85;}
+
+  .backup-menu{
+    position:fixed;left:16px;right:16px;
+    bottom:84px;
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:12px;
+    box-shadow:0 -4px 20px rgba(0,0,0,0.12);
+    z-index:32;
+    overflow:hidden;
+    display:none;
+  }
+  .backup-menu.show{display:block;}
+  .backup-menu button{
+    width:100%;text-align:left;
+    background:none;border:none;
+    padding:14px 16px;
+    font-size:14px;
+    border-bottom:1px solid var(--line);
+    cursor:pointer;
+    color:var(--ink);
+  }
+  .backup-menu button:last-child{border-bottom:none;}
+  .backup-menu .desc{
+    display:block;font-size:11.5px;color:var(--muted);margin-top:2px;font-weight:400;
+  }
+
+  /* Modal */
+  .overlay{
+    position:fixed;inset:0;background:rgba(26,29,26,0.45);
+    z-index:30;display:none;
+  }
+  .overlay.show{display:block;}
+  .sheet{
+    position:fixed;left:0;right:0;bottom:0;
+    background:var(--paper);
+    border-radius:18px 18px 0 0;
+    z-index:31;
+    padding:18px 20px calc(20px + env(safe-area-inset-bottom));
+    transform:translateY(100%);
+    transition:transform 0.25s ease;
+    max-height:90vh;overflow-y:auto;
+  }
+  .sheet.show{transform:translateY(0);}
+  .sheet h2{
+    font-family:Georgia,serif;font-size:19px;margin:0 0 16px;
+  }
+  .field{margin-bottom:14px;}
+  .field label{
+    display:block;font-size:12px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:0.04em;margin-bottom:5px;
+  }
+  .field input, .field select{
+    width:100%;padding:11px 12px;
+    border:1px solid var(--line);border-radius:8px;
+    font-size:16px;background:var(--paper-raised);color:var(--ink);
+    font-family:inherit;
+  }
+  .cat-toggle{display:flex;flex-wrap:wrap;gap:6px;}
+  .cat-btn{
+    flex:1 1 120px;
+    padding:11px 4px;border-radius:8px;border:1.5px solid var(--line);
+    background:var(--paper-raised);font-size:13px;font-weight:600;cursor:pointer;
+    color:var(--muted);
+    /* Les libellés longs (ex: "Entretien véhicule") passent à la ligne plutôt que
+       de déborder sur les petits écrans. Le flex étire tous les boutons d'une même
+       ligne à la même hauteur, donc ça reste aligné. */
+    line-height:1.25;
+  }
+  .cat-btn.active{border-color:var(--c);background:var(--cbg);color:var(--c);}
+  .export-modes{display:flex;gap:6px;}
+  .mode-btn{
+    flex:1;padding:11px 2px;border-radius:8px;border:1.5px solid var(--line);
+    background:var(--paper-raised);font-size:13px;font-weight:600;cursor:pointer;
+    color:var(--muted);white-space:nowrap;
+  }
+  .mode-btn.active{border-color:var(--ink);background:var(--ink);color:var(--paper);}
+  .cat-warning{
+    display:none;
+    font-size:12px;color:#9a6b1f;background:#fdf4e3;
+    border:1px solid #f0dba8;border-radius:8px;
+    padding:8px 10px;margin-top:8px;
+  }
+  .cat-warning.show{display:block;}
+
+  .photo-zone{
+    border:1.5px dashed var(--line);border-radius:10px;
+    padding:16px;text-align:center;margin-bottom:14px;
+    color:var(--muted);font-size:13px;position:relative;
+    background:var(--paper-raised);
+  }
+  .photo-zone img{
+    max-width:100%;max-height:160px;border-radius:6px;display:block;margin:0 auto 8px;
+  }
+  .photo-zone input[type=file]{
+    position:absolute;inset:0;opacity:0;cursor:pointer;
+  }
+  .ocr-status{font-size:12px;color:var(--accent);margin-top:6px;}
+
+  .sheet-actions{display:flex;gap:10px;margin-top:18px;}
+  .sheet-actions button{
+    flex:1;padding:13px 0;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;
+  }
+  .btn-cancel{background:var(--paper-raised);border:1px solid var(--line);color:var(--ink);}
+  .btn-save{background:var(--ink);color:var(--paper);border:none;}
+
+  .toast{
+    position:fixed;bottom:100px;left:50%;transform:translateX(-50%);
+    background:var(--ink);color:var(--paper);
+    padding:10px 18px;border-radius:20px;font-size:13px;
+    z-index:40;opacity:0;transition:opacity 0.2s;pointer-events:none;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Notes de frais</h1>
+  <div class="sub" id="subtitle"></div>
+</div>
+
+<!-- Les cartes de totaux sont generees depuis CATEGORIES (voir buildCategoryUI). -->
+<div class="totals" id="totals"></div>
+
+<div class="month-filter">
+  <select id="monthFilter">
+    <option value="all">Tous les mois</option>
+  </select>
+</div>
+
+<div class="list" id="list"></div>
+
+<div class="fab-bar">
+  <button class="fab secondary" id="exportBtn">⬇ Excel</button>
+  <button class="fab secondary" id="backupBtn">⇅ Sauvegarde</button>
+  <button class="fab primary" id="addBtn">+ Ticket</button>
+</div>
+<input type="file" id="importInput" accept="application/json" style="display:none;">
+
+<div class="backup-menu" id="backupMenu">
+  <button id="doPdf">
+    📄 Exporter les justificatifs (PDF)
+    <span class="desc">Un document avec la photo + les infos de chaque ticket, pour la comptabilité</span>
+  </button>
+  <button id="doCsv">
+    Exporter en CSV
+    <span class="desc">Fichier texte simple, pour un autre tableur ou un import comptable</span>
+  </button>
+  <button id="doExport">
+    Exporter la sauvegarde
+    <span class="desc">Télécharge un fichier .json à transférer sur un autre appareil</span>
+  </button>
+  <button id="doImport">
+    Importer une sauvegarde
+    <span class="desc">Charge un fichier .json exporté depuis ton tel ou PC</span>
+  </button>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div class="sheet" id="sheet">
+  <h2 id="sheetTitle">Nouveau ticket</h2>
+
+  <div class="field">
+    <label>Catégorie</label>
+    <!-- Boutons generes depuis CATEGORIES (voir buildCategoryUI). -->
+    <div class="cat-toggle" id="catToggle"></div>
+    <div class="cat-warning" id="catWarning">⚠ Catégorie détectée automatiquement — vérifie qu'elle est correcte</div>
+  </div>
+
+  <div class="photo-zone" id="photoZone">
+    <span id="photoLabel">📷 Prendre / choisir une photo du ticket</span>
+    <input type="file" id="photoInput" accept="image/*" capture="environment">
+  </div>
+  <div class="ocr-status" id="ocrStatus"></div>
+
+  <div class="field">
+    <label>Montant (€)</label>
+    <input type="number" inputmode="decimal" step="0.01" id="amountInput" placeholder="0.00">
+  </div>
+  <div class="field">
+    <label>Date</label>
+    <input type="date" id="dateInput">
+  </div>
+  <div class="field">
+    <label>Lieu / commentaire (optionnel)</label>
+    <input type="text" id="placeInput" placeholder="ex: Total Auriol">
+  </div>
+  <div class="field">
+    <label>Adresse (optionnel)</label>
+    <input type="text" id="addressInput" placeholder="ex: 13720 La Bouilladisse">
+  </div>
+
+  <button type="button" id="deleteFromEditBtn" style="display:none;width:100%;background:none;border:none;color:var(--danger);font-size:13px;padding:6px 0 12px;cursor:pointer;">🗑 Supprimer ce ticket</button>
+
+  <div class="sheet-actions">
+    <button class="btn-cancel" id="cancelBtn">Annuler</button>
+    <button class="btn-save" id="saveBtn">Enregistrer</button>
+  </div>
+</div>
+
+<div class="sheet" id="exportSheet">
+  <h2 id="exportTitle">Exporter</h2>
+
+  <div class="field">
+    <label>Période à exporter</label>
+    <div class="export-modes">
+      <button type="button" class="mode-btn active" data-mode="all">Tout</button>
+      <button type="button" class="mode-btn" data-mode="month">Un mois</button>
+      <button type="button" class="mode-btn" data-mode="range">Entre 2 dates</button>
+    </div>
+  </div>
+
+  <div class="field" id="exportMonthField" style="display:none;">
+    <label>Mois</label>
+    <select id="exportMonthSelect"></select>
+  </div>
+
+  <div class="field" id="exportRangeField" style="display:none;">
+    <label>Du</label>
+    <input type="date" id="exportFrom">
+    <label style="margin-top:8px;">Au</label>
+    <input type="date" id="exportTo">
+  </div>
+
+  <div class="sheet-actions">
+    <button class="btn-cancel" id="exportCancelBtn">Annuler</button>
+    <button class="btn-save" id="exportConfirmBtn">Exporter</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script>
+const DB_NAME = 'notesFraisDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'tickets';
+let db = null;
+let entries = [];
+// ---------------------------------------------------------------------------
+// SOURCE DE VERITE DES CATEGORIES
+// Pour ajouter une categorie : ajoute une ligne ici, c'est tout. L'interface
+// (cartes de totaux, boutons du formulaire, couleurs), les totaux du PDF et
+// l'export CSV s'adaptent automatiquement.
+//   id    : identifiant stocke en base — NE JAMAIS le changer une fois utilise,
+//           sinon les tickets deja enregistres perdent leur categorie.
+//   color : couleur du texte / de la pastille   bg : fond clair du bouton actif
+// La derniere categorie de la liste sert de repli pour un id inconnu.
+// ---------------------------------------------------------------------------
+const CATEGORIES = [
+  {id:'fuel',  label:'Carburant',  emoji:'⛽', color:'#c4541d', bg:'#fbe9de'},
+  {id:'toll',  label:'Péage',      emoji:'🛣', color:'#7a5195', bg:'#efe7f5'},
+  {id:'maint', label:'Entretien véhicule', emoji:'🔧', color:'#185fa5', bg:'#e6f1fb'},
+  {id:'meal',  label:'Restaurant', emoji:'🍽', color:'#2f6b4f', bg:'#e3efe7'},
+  {id:'other', label:'Autre',      emoji:'📦', color:'#4a6076', bg:'#e4eaf0'},
+];
+
+let currentCat = CATEGORIES[0].id;
+let currentPhotoData = null;
+
+function openDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (ev)=>{
+      const database = ev.target.result;
+      if(!database.objectStoreNames.contains(STORE_NAME)){
+        database.createObjectStore(STORE_NAME, {keyPath:'id'});
+      }
+    };
+    req.onsuccess = (ev)=> resolve(ev.target.result);
+    req.onerror = (ev)=> reject(ev.target.error);
+  });
+}
+
+function fmt(n){
+  return n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' €';
+}
+// Retrouve la definition d'une categorie a partir de son id. Si l'id est inconnu
+// (sauvegarde importee depuis une version plus recente de l'appli, par exemple),
+// on retombe sur la derniere categorie de la liste plutot que de planter.
+function catById(id){
+  return CATEGORIES.find(c=>c.id === id) || CATEGORIES[CATEGORIES.length-1];
+}
+function catLabel(id){ return catById(id).label; }
+function catColor(id){ return catById(id).color; }
+
+// Construit tout ce qui depend de CATEGORIES : sous-titre, cartes de totaux et
+// boutons de selection dans le formulaire. Appele une seule fois au demarrage.
+function buildCategoryUI(){
+  document.getElementById('subtitle').textContent =
+    CATEGORIES.map(c=>c.label).join(' · ');
+
+  document.getElementById('totals').innerHTML = CATEGORIES.map(c=>`
+    <div class="total-card" style="--c:${c.color};">
+      <div class="label">${c.label}</div>
+      <div class="amount" id="total-${c.id}">0,00 €</div>
+    </div>`).join('') + `
+    <div class="total-card grand">
+      <div class="label" id="grandLabel">Total</div>
+      <div class="amount" id="total-grand">0,00 €</div>
+    </div>`;
+
+  const toggle = document.getElementById('catToggle');
+  toggle.innerHTML = CATEGORIES.map(c=>`
+    <button type="button" class="cat-btn" data-cat="${c.id}"
+            style="--c:${c.color};--cbg:${c.bg};">${c.emoji} ${c.label}</button>`).join('');
+
+  toggle.querySelectorAll('.cat-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      currentCat = btn.dataset.cat;
+      syncCatButtons();
+      // Un clic manuel vaut confirmation : on retire l'avertissement OCR.
+      document.getElementById('catWarning').classList.remove('show');
+    });
+  });
+
+  // Etat initial coherent des le depart (openSheet resynchronise ensuite a
+  // chaque ouverture, mais on evite un formulaire sans aucun bouton allume).
+  syncCatButtons();
+}
+
+// Met le bouton correspondant a currentCat en surbrillance.
+function syncCatButtons(){
+  document.querySelectorAll('.cat-btn').forEach(b=>
+    b.classList.toggle('active', b.dataset.cat === currentCat));
+}
+function fmtDate(d){
+  const dt = new Date(d+'T00:00:00');
+  return dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function monthKey(d){
+  const dt = new Date(d+'T00:00:00');
+  return dt.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+}
+// Clé de mois triable au format AAAA-MM (ex: "2026-06"), utilisée pour le filtre.
+function monthKeyISO(d){
+  return d.slice(0, 7); // les dates sont déjà au format AAAA-MM-JJ
+}
+
+async function loadEntries(){
+  try{
+    if(!db) db = await openDB();
+    const loaded = await new Promise((resolve, reject)=>{
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = ()=> resolve(req.result || []);
+      req.onerror = ()=> reject(req.error);
+    });
+    loaded.sort((a,b)=> b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+    entries = loaded;
+    render();
+  }catch(e){
+    console.error('Erreur chargement', e);
+    showToast('Erreur de chargement — ' + (e.message || 'voir console'));
+  }
+}
+
+async function saveEntry(entry){
+  if(!db) db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(entry);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function deleteEntry(id){
+  if(!db) db = await openDB();
+  await new Promise((resolve, reject)=>{
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(id);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+  entries = entries.filter(e=>e.id !== id);
+  render();
+}
+
+async function importEntries(newEntries){
+  if(!db) db = await openDB();
+  await new Promise((resolve, reject)=>{
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const knownIds = CATEGORIES.map(c=>c.id);
+    for(const e of newEntries){
+      if(e && e.id && typeof e.amount === 'number' && e.date && e.cat){
+        // Une sauvegarde peut venir d'un appareil ou l'appli connait d'autres
+        // categories. On rattache alors le ticket a la categorie de repli pour
+        // qu'il reste visible et compte dans les totaux.
+        if(!knownIds.includes(e.cat)) e.cat = CATEGORIES[CATEGORIES.length-1].id;
+        store.put(e);
+      }
+    }
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+  await loadEntries();
+}
+
+let selectedMonth = 'all'; // 'all' ou une clé AAAA-MM
+
+function populateMonthFilter(){
+  const select = document.getElementById('monthFilter');
+  // Liste des mois présents dans les tickets, du plus récent au plus ancien
+  const months = [...new Set(entries.map(e=>monthKeyISO(e.date)))].sort().reverse();
+  const current = select.value;
+  let opts = '<option value="all">Tous les mois</option>';
+  for(const m of months){
+    const label = monthKey(m + '-01'); // ex "juin 2026"
+    opts += `<option value="${m}">${label.charAt(0).toUpperCase()+label.slice(1)}</option>`;
+  }
+  select.innerHTML = opts;
+  // On restaure la sélection si le mois existe encore, sinon retour à "tous"
+  if(current && (current === 'all' || months.includes(current))){
+    select.value = current;
+    selectedMonth = current;
+  }else{
+    select.value = 'all';
+    selectedMonth = 'all';
+  }
+}
+
+function render(){
+  const list = document.getElementById('list');
+  populateMonthFilter();
+
+  // Entrées à afficher selon le filtre mois sélectionné
+  const visible = selectedMonth === 'all'
+    ? entries
+    : entries.filter(e=>monthKeyISO(e.date) === selectedMonth);
+
+  // Les totaux reflètent le périmètre affiché (mois filtré ou tout)
+  for(const c of CATEGORIES){
+    const sum = visible.filter(e=>e.cat === c.id).reduce((s,e)=>s+e.amount, 0);
+    document.getElementById('total-'+c.id).textContent = fmt(sum);
+  }
+  // Total general calcule sur TOUTES les entrees visibles, pas sur la somme des
+  // categories : ainsi un ticket portant une categorie inconnue reste compte.
+  const grand = visible.reduce((s,e)=>s+e.amount, 0);
+  document.getElementById('total-grand').textContent = fmt(grand);
+  document.getElementById('grandLabel').textContent =
+    visible.length === 1 ? 'Total · 1 ticket' : `Total · ${visible.length} tickets`;
+
+  if(entries.length === 0){
+    list.innerHTML = `<div class="empty-state"><div class="icon">🧾</div><p>Aucun ticket enregistré</p><p>Appuie sur "Nouveau ticket" pour commencer</p></div>`;
+    return;
+  }
+  if(visible.length === 0){
+    list.innerHTML = `<div class="empty-state"><div class="icon">📅</div><p>Aucun ticket pour ce mois</p></div>`;
+    return;
+  }
+
+  let html = '';
+  let lastMonth = null;
+  for(const e of visible){
+    const mk = monthKey(e.date);
+    if(mk !== lastMonth){
+      html += `<div class="month-label">${mk}</div>`;
+      lastMonth = mk;
+    }
+    const catName = catLabel(e.cat);
+    html += `
+      <div class="entry" data-id="${e.id}" style="--c:${catColor(e.cat)};">
+        <div class="tag"></div>
+        <div class="info">
+          <div class="top-row">
+            <span class="cat">${catName}</span>
+            <span class="amount">${fmt(e.amount)}</span>
+          </div>
+          <div class="meta">${fmtDate(e.date)}${e.place ? ' · ' + escapeHtml(e.place) : ''}${e.photo ? ' · 📎' : ''}</div>
+        </div>
+        <button class="del" data-id="${e.id}">✕</button>
+      </div>
+    `;
+  }
+  list.innerHTML = html;
+
+  list.querySelectorAll('.entry').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const id = el.getAttribute('data-id');
+      const entry = entries.find(x=>x.id === id);
+      if(entry) openSheet(entry);
+    });
+  });
+
+  list.querySelectorAll('.del').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      if(confirm('Supprimer ce ticket ?')) deleteEntry(id);
+    });
+  });
+}
+
+function escapeHtml(s){
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+// --- Modal logic ---
+const overlay = document.getElementById('overlay');
+const sheet = document.getElementById('sheet');
+
+let editingId = null; // null = mode ajout, sinon id du ticket en cours de modification
+let editingPhoto = null; // photo du ticket en cours d'édition (pour la conserver si non remplacée)
+
+function openSheet(editEntry){
+  currentPhotoData = null;
+  editingPhoto = null;
+  document.getElementById('photoLabel').textContent = '📷 Prendre / choisir une photo du ticket';
+  document.getElementById('ocrStatus').textContent = '';
+  document.getElementById('photoInput').value = '';
+  document.getElementById('catWarning').classList.remove('show');
+
+  if(editEntry && editEntry.id){
+    // Mode édition : on pré-remplit avec les valeurs existantes
+    editingId = editEntry.id;
+    editingPhoto = editEntry.photo || null;
+    currentCat = editEntry.cat;
+    document.getElementById('amountInput').value = editEntry.amount;
+    document.getElementById('dateInput').value = editEntry.date;
+    document.getElementById('placeInput').value = editEntry.place || '';
+    document.getElementById('addressInput').value = editEntry.address || '';
+    document.getElementById('sheetTitle').textContent = 'Modifier le ticket';
+    document.getElementById('saveBtn').textContent = 'Mettre à jour';
+    document.getElementById('deleteFromEditBtn').style.display = 'block';
+    // Affiche la photo justificative existante si elle est présente
+    if(editingPhoto){
+      document.getElementById('photoLabel').innerHTML = `<img src="${editingPhoto}">Photo du justificatif — appuie pour changer`;
+    }
+  }else{
+    // Mode ajout : formulaire vierge
+    editingId = null;
+    currentCat = CATEGORIES[0].id;
+    document.getElementById('amountInput').value = '';
+    document.getElementById('dateInput').value = new Date().toISOString().slice(0,10);
+    document.getElementById('placeInput').value = '';
+    document.getElementById('addressInput').value = '';
+    document.getElementById('sheetTitle').textContent = 'Nouveau ticket';
+    document.getElementById('saveBtn').textContent = 'Enregistrer';
+    document.getElementById('deleteFromEditBtn').style.display = 'none';
+  }
+  syncCatButtons();
+  overlay.classList.add('show');
+  sheet.classList.add('show');
+}
+function closeSheet(){
+  overlay.classList.remove('show');
+  sheet.classList.remove('show');
+}
+
+document.getElementById('addBtn').addEventListener('click', ()=> openSheet());
+document.getElementById('cancelBtn').addEventListener('click', closeSheet);
+overlay.addEventListener('click', ()=>{ closeSheet(); closeBackupMenu(); closeExportSheet(); });
+
+// --- Backup menu (export/import JSON pour synchro tel/PC) ---
+const backupMenu = document.getElementById('backupMenu');
+function openBackupMenu(){ backupMenu.classList.add('show'); overlay.classList.add('show'); }
+function closeBackupMenu(){ backupMenu.classList.remove('show'); overlay.classList.remove('show'); }
+
+document.getElementById('backupBtn').addEventListener('click', openBackupMenu);
+
+async function generatePDF(list, periodLabel){
+  if(list.length === 0){
+    showToast('Aucun ticket pour cette période');
+    return;
+  }
+  if(!window.jspdf || !window.jspdf.jsPDF){
+    showToast('Librairie PDF non chargée — réessaie avec une connexion');
+    return;
+  }
+  showToast('Génération du PDF en cours…');
+
+  // On laisse le toast s'afficher avant le travail lourd
+  await new Promise(r=>setTimeout(r, 50));
+
+  try{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({unit:'mm', format:'a4'});
+    const pageW = 210, pageH = 297, margin = 15;
+
+    // Tickets triés par date croissante pour un classement logique
+    const sorted = [...list].sort((a,b)=> a.date.localeCompare(b.date));
+    // Un total par categorie, plus le total general (calcule sur tous les tickets
+    // pour ne rien perdre si un ticket porte une categorie inconnue).
+    const catTotals = CATEGORIES.map(c=>({
+      label: c.label,
+      sum: sorted.filter(e=>e.cat === c.id).reduce((s,e)=>s+e.amount, 0)
+    }));
+    const grandTotal = sorted.reduce((s,e)=>s+e.amount, 0);
+
+    // --- Page de garde : récapitulatif ---
+    doc.setFontSize(20);
+    doc.text('Justificatifs de frais', margin, 30);
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, margin, 38);
+    if(periodLabel){
+      doc.text(`Période : ${periodLabel}`, margin, 44);
+    }
+    doc.setTextColor(0);
+    doc.setFontSize(12);
+    let y = periodLabel ? 60 : 55;
+    doc.text(`Nombre de tickets : ${sorted.length}`, margin, y); y += 9;
+    for(const t of catTotals){
+      // On saute les categories sans aucun ticket sur la periode : inutile
+      // d'alourdir la page de garde avec des lignes a 0,00 €.
+      if(t.sum === 0) continue;
+      doc.text(`Total ${t.label.toLowerCase()} : ${t.sum.toLocaleString('fr-FR',{minimumFractionDigits:2})} €`, margin, y);
+      y += 9;
+    }
+    doc.setFont(undefined, 'bold');
+    doc.text(`Total général : ${grandTotal.toLocaleString('fr-FR',{minimumFractionDigits:2})} €`, margin, y);
+    doc.setFont(undefined, 'normal');
+
+    // Petit tableau récap
+    y += 14;
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text('Date', margin, y);
+    doc.text('Catégorie', margin+35, y);
+    doc.text('Montant', margin+80, y);
+    doc.text('Lieu', margin+110, y);
+    doc.setTextColor(0);
+    y += 2;
+    doc.line(margin, y, pageW-margin, y);
+    y += 6;
+    for(const e of sorted){
+      if(y > pageH - margin){ doc.addPage(); y = margin + 6; }
+      const cat = catLabel(e.cat);
+      doc.text(fmtDate(e.date), margin, y);
+      doc.text(cat, margin+35, y);
+      doc.text(`${e.amount.toLocaleString('fr-FR',{minimumFractionDigits:2})} €`, margin+80, y);
+      doc.text((e.place||'-').slice(0,30), margin+110, y);
+      y += 7;
+    }
+
+    // --- Une page par ticket : infos + photo ---
+    let pageNum = 0;
+    for(const e of sorted){
+      pageNum++;
+      doc.addPage();
+      const cat = catLabel(e.cat);
+      doc.setFontSize(14);
+      doc.setFont(undefined, 'bold');
+      doc.text(`Ticket ${pageNum} — ${cat}`, margin, 25);
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(11);
+      doc.text(`Date : ${fmtDate(e.date)}`, margin, 35);
+      doc.text(`Montant : ${e.amount.toLocaleString('fr-FR',{minimumFractionDigits:2})} €`, margin, 42);
+      let infoY = 49;
+      if(e.place){ doc.text(`Lieu : ${e.place}`, margin, infoY); infoY += 7; }
+      if(e.address){ doc.text(`Adresse : ${e.address}`, margin, infoY); infoY += 7; }
+      const photoTop = infoY + 2;
+
+      if(e.photo){
+        try{
+          // Calcule les dimensions pour insérer la photo sans déformation
+          const dims = await getImageDims(e.photo);
+          const maxW = pageW - 2*margin;
+          const maxH = pageH - photoTop - margin;
+          let w = maxW, h = w * dims.height / dims.width;
+          if(h > maxH){ h = maxH; w = h * dims.width / dims.height; }
+          const x = (pageW - w) / 2;
+          doc.addImage(e.photo, 'JPEG', x, photoTop, w, h);
+        }catch(imgErr){
+          console.error('Image non insérée:', imgErr);
+          doc.setTextColor(150);
+          doc.text('(photo du justificatif illisible)', margin, photoTop + 4);
+          doc.setTextColor(0);
+        }
+      }else{
+        doc.setTextColor(150);
+        doc.text('(aucune photo enregistrée pour ce ticket)', margin, photoTop + 4);
+        doc.setTextColor(0);
+      }
+    }
+
+    const suffix = periodLabel ? '_' + periodLabel.replace(/[^0-9a-zA-Zà-ÿ]+/g,'-') : '';
+    doc.save(`justificatifs_frais${suffix}_${new Date().toISOString().slice(0,10)}.pdf`);
+    showToast('PDF généré ✓');
+  }catch(err){
+    console.error('Erreur génération PDF:', err);
+    showToast('Erreur lors de la génération du PDF');
+  }
+}
+
+function getImageDims(dataUrl){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=> resolve({width: img.width, height: img.height});
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+document.getElementById('doExport').addEventListener('click', ()=>{
+  closeBackupMenu();
+  if(entries.length === 0){
+    showToast('Aucune donnée à exporter');
+    return;
+  }
+  const json = JSON.stringify(entries, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `notes_frais_sauvegarde_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Sauvegarde téléchargée');
+});
+
+document.getElementById('doImport').addEventListener('click', ()=>{
+  closeBackupMenu();
+  document.getElementById('importInput').click();
+});
+
+document.getElementById('importInput').addEventListener('change', async (ev)=>{
+  const file = ev.target.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(!Array.isArray(data)) throw new Error('Format invalide');
+    await importEntries(data);
+    showToast(`${data.length} ticket(s) importé(s)`);
+  }catch(e){
+    console.error(e);
+    showToast('Fichier de sauvegarde invalide');
+  }
+  ev.target.value = '';
+});
+
+document.getElementById('photoInput').addEventListener('change', async (ev)=>{
+  const file = ev.target.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('ocrStatus');
+  statusEl.textContent = '🔍 Préparation de la photo…';
+  try{
+    // On compresse la photo dès le chargement : elle sert à la fois pour l'OCR
+    // et comme justificatif stocké. La compression réduit fortement la taille
+    // (un scan iPhone fait plusieurs Mo, on descend à ~100-300 Ko) pour que
+    // la base locale et les exports restent légers.
+    currentPhotoData = await compressImage(file, 1400, 0.7);
+  }catch(err){
+    console.error('Compression échouée, on garde l\'original:', err);
+    currentPhotoData = await readFileAsDataURL(file);
+  }
+  document.getElementById('photoLabel').innerHTML = `<img src="${currentPhotoData}">Photo chargée — appuie pour changer`;
+
+  {
+    let lastKnownStep = 'initialisation';
+    const onStep = (m)=>{
+      if(m && m.status){
+        lastKnownStep = m.status;
+        statusEl.textContent = `🔍 ${translateStep(m.status)}…`;
+      }
+    };
+    try{
+      // On lit sur une version nettoyee de la photo ORIGINALE (pas sur la copie
+      // compressee destinee au stockage) : chaque compression perd des details
+      // qui comptent sur un ticket thermique.
+      statusEl.textContent = '🔍 Amélioration de l\'image…';
+      let ocrImage = currentPhotoData;
+      try{
+        const original = await readFileAsDataURL(file);
+        ocrImage = await preprocessForOCR(original, 1800);
+      }catch(prepErr){
+        console.warn('Prétraitement impossible, lecture sur la photo telle quelle :', prepErr);
+      }
+
+      let text = await runOCR(ocrImage, onStep);
+
+      // Filet de securite : si le nettoyage a trop mange l'image (ticket tres
+      // pale, photo floue), on retente sur la photo brute et on garde la
+      // meilleure des deux lectures.
+      if(!extractAmount(text) && !extractDate(text) && ocrImage !== currentPhotoData){
+        statusEl.textContent = '🔍 Seconde lecture sur la photo d\'origine…';
+        const fallbackText = await runOCR(currentPhotoData, onStep);
+        if(extractAmount(fallbackText) || extractDate(fallbackText)) text = fallbackText;
+      }
+      const amount = extractAmount(text);
+      const date = extractDate(text);
+      const brand = extractBrand(text);
+      const fuelType = extractFuelType(text);
+      const address = extractAddress(text);
+      // Priorite : enseigne reconnue > entretien > carburant > peage.
+      // L'entretien passe AVANT le carburant car un rapport de controle technique
+      // indique le carburant du vehicule ("Carburant : GAZOLE"), ce qui ferait
+      // basculer le ticket en Carburant a tort.
+      const tollHint = looksLikeToll(text);
+      const maintHint = looksLikeMaintenance(text);
+      const detectedCat = brand.cat
+        || (maintHint ? 'maint' : null)
+        || (fuelType ? 'fuel' : (tollHint ? 'toll' : null));
+      if(amount){
+        document.getElementById('amountInput').value = amount;
+      }
+      if(date){
+        document.getElementById('dateInput').value = date;
+      }
+      // Construit le commentaire à partir de l'enseigne et/ou du type de carburant
+      // détectés (ex: "TotalEnergies — Diesel"). On ne remplit que si l'utilisateur
+      // n'a pas déjà écrit quelque chose dans le champ.
+      if(!document.getElementById('placeInput').value){
+        const commentParts = [];
+        if(brand.label) commentParts.push(brand.label);
+        // Sur un ticket d'entretien, le carburant lu est celui du vehicule
+        // (fiche de controle technique) : il n'a rien a faire dans le commentaire.
+        if(fuelType && detectedCat !== 'maint') commentParts.push(fuelType);
+        if(commentParts.length){
+          document.getElementById('placeInput').value = commentParts.join(' — ');
+        }
+      }
+      // Remplit l'adresse détectée (CP + ville, et rue si lisible)
+      if(address && !document.getElementById('addressInput').value){
+        document.getElementById('addressInput').value = address;
+      }
+      // Pré-coche automatiquement la catégorie si l'enseigne détectée est connue
+      // (carburant ou restaurant) — l'utilisateur doit vérifier avant d'enregistrer,
+      // donc on affiche un badge d'avertissement qui ne disparaît qu'à son clic manuel.
+      // Si on a détecté un type de carburant (diesel/essence), c'est forcément du carburant.
+      if(detectedCat){
+        currentCat = detectedCat;
+        syncCatButtons();
+        document.getElementById('catWarning').classList.add('show');
+      }
+      const parts = [];
+      if(brand.label) parts.push(`enseigne "${brand.label}"`);
+      if(fuelType && detectedCat !== 'maint') parts.push(`carburant "${fuelType}"`);
+      if(maintHint && !brand.cat) parts.push('entretien véhicule');
+      if(tollHint && !brand.cat && !maintHint && !fuelType) parts.push('ticket de péage');
+      if(address) parts.push('adresse');
+      if(detectedCat) parts.push(`catégorie ${catLabel(detectedCat)} pré-sélectionnée`);
+      if(amount) parts.push('montant');
+      if(date) parts.push('date');
+      statusEl.textContent = parts.length
+        ? `✓ Détecté : ${parts.join(', ')} — vérifie avant d'enregistrer`
+        : '⚠ Rien détecté automatiquement, complète manuellement';
+    }catch(err){
+      console.error('Erreur OCR complète:', err, '— dernière étape connue:', lastKnownStep);
+      const detail = (err && (err.message || err.toString())) || 'erreur inconnue';
+      statusEl.innerHTML = `⚠ Échec pendant l'étape <b>"${lastKnownStep}"</b> (${detail}) — complète manuellement.<br><span style="font-size:11px;">La photo est quand même conservée comme justificatif.</span>`;
+    }
+  }
+});
+
+function loadImage(dataUrl){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=> resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+// Prepare une version de la photo optimisee pour l'OCR. C'est ici qu'on gagne
+// le plus de caracteres : les tickets thermiques photographies sont pales, mal
+// eclaires et souvent gondoles, et Tesseract travaille bien mieux sur du noir
+// et blanc franc que sur une photo couleur.
+//   1. mise a l'echelle (Tesseract vise ~300 dpi, donc on ne descend pas trop bas)
+//   2. niveaux de gris
+//   3. etirement de contraste sur les percentiles 5/95 (redonne du noir et du blanc)
+//   4. binarisation adaptative par moyenne locale : chaque pixel est compare a la
+//      moyenne de son voisinage, ce qui absorbe les ombres et l'eclairage inegal
+//      la ou un seuil global unique ferait disparaitre des zones entieres.
+// L'image retournee sert UNIQUEMENT a la lecture ; le justificatif stocke reste
+// la photo couleur compressee.
+async function preprocessForOCR(dataUrl, maxSize){
+  const img = await loadImage(dataUrl);
+  const ratio = maxSize / Math.max(img.width, img.height);
+  const width  = Math.max(1, Math.round(img.width  * ratio));
+  const height = Math.max(1, Math.round(img.height * ratio));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(img, 0, 0, width, height);
+
+  const imgData = ctx.getImageData(0, 0, width, height);
+  const px = imgData.data;
+  const n = width * height;
+
+  // --- niveaux de gris (ponderation perceptuelle) ---
+  const gray = new Uint8ClampedArray(n);
+  for(let i=0, j=0; j<n; i+=4, j++){
+    gray[j] = (px[i]*0.299 + px[i+1]*0.587 + px[i+2]*0.114) | 0;
+  }
+
+  // --- etirement de contraste 5% / 95% ---
+  const hist = new Uint32Array(256);
+  for(let j=0; j<n; j++) hist[gray[j]]++;
+  let lo = 0, hi = 255, acc = 0;
+  for(let v=0; v<256; v++){ acc += hist[v]; if(acc > n*0.05){ lo = v; break; } }
+  acc = 0;
+  for(let v=255; v>=0; v--){ acc += hist[v]; if(acc > n*0.05){ hi = v; break; } }
+  const span = Math.max(1, hi - lo);
+  for(let j=0; j<n; j++){
+    const v = ((gray[j] - lo) * 255 / span) | 0;
+    gray[j] = v < 0 ? 0 : (v > 255 ? 255 : v);
+  }
+
+  // --- image integrale, pour une moyenne locale a cout constant ---
+  const iw = width + 1;
+  const integral = new Uint32Array(iw * (height + 1));
+  for(let y=0; y<height; y++){
+    let rowSum = 0;
+    for(let x=0; x<width; x++){
+      rowSum += gray[y*width + x];
+      integral[(y+1)*iw + (x+1)] = integral[y*iw + (x+1)] + rowSum;
+    }
+  }
+
+  // --- binarisation adaptative ---
+  const win = Math.max(15, (Math.min(width, height) / 16) | 0) | 1;
+  const half = win >> 1;
+  const C = 8; // marge sous la moyenne locale : plus haut = texte plus maigre
+  for(let y=0; y<height; y++){
+    const y0 = Math.max(0, y-half), y1 = Math.min(height-1, y+half);
+    for(let x=0; x<width; x++){
+      const x0 = Math.max(0, x-half), x1 = Math.min(width-1, x+half);
+      const area = (y1-y0+1) * (x1-x0+1);
+      const sum = integral[(y1+1)*iw + (x1+1)] - integral[y0*iw + (x1+1)]
+                - integral[(y1+1)*iw + x0]     + integral[y0*iw + x0];
+      const out = gray[y*width + x] < (sum/area) - C ? 0 : 255;
+      const k = (y*width + x) * 4;
+      px[k] = px[k+1] = px[k+2] = out; px[k+3] = 255;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+// Lance Tesseract. On configure le moteur en mode "colonne unique de texte"
+// (PSM 4), qui correspond a la forme d'un ticket de caisse, et on preserve les
+// espaces entre mots. Si l'API worker n'est pas disponible dans cette version
+// de tesseract.js, on retombe sur l'appel simple plutot que d'echouer.
+async function runOCR(image, onStep){
+  try{
+    const worker = await Tesseract.createWorker('fra', 1, {logger:onStep});
+    try{
+      await worker.setParameters({
+        tessedit_pageseg_mode: '4',
+        preserve_interword_spaces: '1'
+      });
+      const {data} = await worker.recognize(image);
+      return data.text;
+    }finally{
+      await worker.terminate();
+    }
+  }catch(err){
+    console.warn('Worker Tesseract indisponible, repli sur recognize() :', err);
+    const result = await Tesseract.recognize(image, 'fra', {logger:onStep});
+    return result.data.text;
+  }
+}
+
+function readFileAsDataURL(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = (e)=> resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// Compresse une image : redimensionne pour que le plus grand côté <= maxSize,
+// et réencode en JPEG avec la qualité donnée. Retourne un data URL.
+async function compressImage(file, maxSize, quality){
+  const dataUrl = await readFileAsDataURL(file);
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let {width, height} = img;
+      if(width > height && width > maxSize){
+        height = Math.round(height * maxSize / width);
+        width = maxSize;
+      }else if(height >= width && height > maxSize){
+        width = Math.round(width * maxSize / height);
+        height = maxSize;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+function translateStep(status){
+  const map = {
+    'loading tesseract core': 'Chargement du moteur OCR',
+    'initializing tesseract': 'Initialisation',
+    'loading language traineddata': 'Téléchargement du modèle français',
+    'initializing api': 'Préparation',
+    'recognizing text': 'Analyse du ticket'
+  };
+  return map[status] || status;
+}
+
+function extractAmount(text){
+  // Cherche les montants type "TOTAL 23,50", "23.50 €", ou "1 234,56" (avec
+  // séparateur de milliers). Prend le plus probable (souvent proche de "total").
+  // On normalise d'abord les espaces fines/insécables utilisées comme séparateurs
+  // de milliers pour ne pas casser la lecture (ex: "1 234,56" -> "1234,56").
+  const lines = text.replace(/[\u00a0\u202f]/g, ' ').split('\n');
+  let candidates = [];
+  // Capture un nombre avec séparateur de milliers optionnel (espace ou point)
+  // suivi d'une partie décimale à 2 chiffres : 1 234,56 / 1.234,56 / 234,56 / 23.50
+  const amountRegex = /(\d{1,3}(?:[ .]\d{3})*[.,]\d{2})\s*€?/g;
+  for(const line of lines){
+    const lower = line.toLowerCase();
+    let m;
+    while((m = amountRegex.exec(line)) !== null){
+      // Nettoyage : retire les séparateurs de milliers, garde le dernier séparateur
+      // décimal. On supprime espaces, puis on traite le séparateur décimal final.
+      let raw = m[1].replace(/ /g, '');
+      // Si le format est "1.234,56" (point=milliers, virgule=décimal) -> on enlève les points
+      if(/,\d{2}$/.test(raw)){
+        raw = raw.replace(/\./g, '').replace(',', '.');
+      }else{
+        // format "1,234.50" (rare en France) ou "234.56" -> on enlève les virgules
+        raw = raw.replace(/,/g, '');
+      }
+      const val = parseFloat(raw);
+      if(val > 0 && val < 10000){
+        const priority = /total|ttc|à payer|montant/.test(lower) ? 2 : 1;
+        candidates.push({val, priority});
+      }
+    }
+  }
+  if(candidates.length === 0) return null;
+  candidates.sort((a,b)=> b.priority - a.priority || b.val - a.val);
+  return candidates[0].val.toFixed(2);
+}
+
+function extractDate(text){
+  // formats type 12/06/2026 ou 12-06-26
+  const m = text.match(/(\d{2})[\/\-.](\d{2})[\/\-.](\d{2,4})/);
+  if(!m) return null;
+  let [_, d, mo, y] = m;
+  if(y.length === 2) y = '20'+y;
+  const dt = new Date(`${y}-${mo}-${d}`);
+  if(isNaN(dt.getTime())) return null;
+  return `${y}-${mo}-${d}`;
+}
+
+// Marques connues (normalisées sans accent/casse pour le matching), avec libellé d'affichage propre
+// et catégorie associée (fuel = carburant, meal = restaurant) pour pré-cocher la catégorie.
+const KNOWN_BRANDS = [
+  // Stations essence
+  {match:'totalenergies', label:'TotalEnergies', cat:'fuel'},
+  {match:'total access', label:'Total Access', cat:'fuel'},
+  {match:'total', label:'Total', cat:'fuel'},
+  {match:'esso', label:'Esso', cat:'fuel'},
+  {match:'shell', label:'Shell', cat:'fuel'},
+  {match:'bp', label:'BP', cat:'fuel'},
+  {match:'avia', label:'Avia', cat:'fuel'},
+  {match:'intermarche', label:'Intermarché', cat:'fuel'},
+  {match:'leclerc', label:'Leclerc', cat:'fuel'},
+  {match:'carrefour', label:'Carrefour', cat:'fuel'},
+  {match:'auchan', label:'Auchan', cat:'fuel'},
+  {match:'super u', label:'Super U', cat:'fuel'},
+  {match:'station u', label:'Station U', cat:'fuel'},
+  {match:'casino', label:'Casino', cat:'fuel'},
+  {match:'cora', label:'Cora', cat:'fuel'},
+  {match:'dyneff', label:'Dyneff', cat:'fuel'},
+  // Restauration
+  {match:'mcdonald', label:"McDonald's", cat:'meal'},
+  {match:'quick', label:'Quick', cat:'meal'},
+  {match:'burger king', label:'Burger King', cat:'meal'},
+  {match:'kfc', label:'KFC', cat:'meal'},
+  {match:'subway', label:'Subway', cat:'meal'},
+  {match:'flunch', label:'Flunch', cat:'meal'},
+  {match:'buffalo grill', label:'Buffalo Grill', cat:'meal'},
+  {match:'la mie caline', label:'La Mie Câline', cat:'meal'},
+  {match:'paul', label:'Paul', cat:'meal'},
+  {match:'pomme de pain', label:'Pomme de Pain', cat:'meal'},
+  {match:'starbucks', label:'Starbucks', cat:'meal'},
+  {match:'brioche doree', label:'Brioche Dorée', cat:'meal'},
+  {match:'class croute', label:"Class'Croûte", cat:'meal'},
+
+  // Societes d'autoroute et badges de telepeage
+  {match:'vinci autoroutes', label:'Vinci Autoroutes', cat:'toll'},
+  {match:'cofiroute', label:'Cofiroute', cat:'toll'},
+  {match:'escota', label:'Escota', cat:'toll'},
+  {match:'atlandes', label:'Atlandes', cat:'toll'},
+  {match:'sanef', label:'Sanef', cat:'toll'},
+  {match:'aprr', label:'APRR', cat:'toll'},
+  {match:'area', label:'AREA', cat:'toll'},
+  {match:'sapn', label:'SAPN', cat:'toll'},
+  {match:'asf', label:'ASF', cat:'toll'},
+  {match:'ulys', label:'Ulys', cat:'toll'},
+  {match:'bip go', label:'Bip&Go', cat:'toll'},
+  {match:'fulli', label:'Fulli', cat:'toll'},
+
+  // Centres auto, garages et contrôle technique
+  {match:'norauto', label:'Norauto', cat:'maint'},
+  {match:'feu vert', label:'Feu Vert', cat:'maint'},
+  {match:'euromaster', label:'Euromaster', cat:'maint'},
+  {match:'carter cash', label:'Carter-Cash', cat:'maint'},
+  {match:'first stop', label:'First Stop', cat:'maint'},
+  {match:'point s', label:'Point S', cat:'maint'},
+  {match:'securitest', label:'Sécuritest', cat:'maint'},
+  {match:'autovision', label:'Autovision', cat:'maint'},
+  {match:'auto securite', label:'Auto Sécurité', cat:'maint'},
+  {match:'dekra', label:'Dekra', cat:'maint'},
+  {match:'speedy', label:'Speedy', cat:'maint'},
+  {match:'midas', label:'Midas', cat:'maint'},
+  {match:'roady', label:'Roady', cat:'maint'},
+  {match:'vulco', label:'Vulco', cat:'maint'},
+];
+
+function normalize(s){
+  return s.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // retire les accents
+    .replace(/[^a-z0-9 ]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+// Distance de Levenshtein bornee : des que le cout depasse max, on abandonne.
+// Utile parce qu'on compare une enseigne contre des dizaines de fenetres de texte.
+function levenshtein(a, b, max){
+  if(Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({length: b.length + 1}, (_, i)=> i);
+  for(let i=1; i<=a.length; i++){
+    const cur = [i];
+    let best = i;
+    for(let j=1; j<=b.length; j++){
+      const cost = a[i-1] === b[j-1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + cost);
+      if(cur[j] < best) best = cur[j];
+    }
+    if(best > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// Replie les confusions classiques de l'OCR sur une seule forme, pour que
+// "T0TALENERG1ES" et "totalenergies" deviennent identiques avant comparaison.
+// A n'appliquer qu'aux noms d'enseigne : ca detruit les chiffres.
+function ocrFold(s){
+  return s
+    .replace(/rn/g, 'm')
+    .replace(/0/g, 'o').replace(/[1l]/g, 'i').replace(/5/g, 's')
+    .replace(/8/g, 'b').replace(/2/g, 'z').replace(/[69]/g, 'g')
+    .replace(/4/g, 'a').replace(/3/g, 'e').replace(/7/g, 't')
+    .replace(/\s+/g, ' ');
+}
+
+// Cherche needle dans haystack en tolerant quelques caracteres faux.
+// La fenetre doit commencer sur un DEBUT DE MOT : sans cette contrainte,
+// "shell" replie en "sheii" se retrouvait au milieu de "marseille" ("marseiiie"),
+// et une adresse suffisait a faire croire a une station-service.
+function fuzzyIncludes(haystack, needle){
+  const len = needle.length;
+  if(len < 5) return false;               // trop court : le flou ferait n'importe quoi
+  const max = len <= 7 ? 1 : Math.floor(len * 0.2);
+  for(let i=0; i <= haystack.length - (len - max); i++){
+    if(i > 0 && haystack[i-1] !== ' ') continue;
+    for(const w of [len-1, len, len+1]){
+      if(w <= 0 || i + w > haystack.length) continue;
+      if(levenshtein(haystack.substr(i, w), needle, max) <= max) return true;
+    }
+  }
+  return false;
+}
+
+// Mots qui trahissent une ligne de pied de ticket (paiement, TVA, fidelite...)
+// plutot qu'un nom d'enseigne. C'est ce qui produisait des "CARTE BANCAIRE" et
+// des "N de ticket par type de carte" dans la colonne Lieu.
+const OCR_NOISE_WORDS = /\b(carte|bancaire|cb|espece|especes|monnaie|rendu|ticket|recu|facture|total|ttc|ht|tva|montant|payer|paiement|client|caisse|vendeur|magasin|siret|siren|rcs|naf|ape|tel|telephone|fax|merci|bienvenue|revoir|contact|debit|credit|transaction|autorisation|code|copie|duplicata|commercant|emv|aid|volume|litre|litres|prix|pompe|piste|remise|fidelite|avoir|solde|caissier|hotesse|serveur|table|couvert|gazole|gasoil|diesel|essence|adblue|excellium|plomb|sp ?9[58]|e10|e85)\b/;
+
+// Decide si une ligne peut raisonnablement etre un nom d'enseigne. En cas de
+// doute on renvoie null : un champ vide vaut mieux qu'un champ rempli de
+// charabia, que l'utilisateur devra de toute facon effacer a la main.
+function cleanName(raw){
+  const clean = raw.replace(/[^0-9a-zA-ZÀ-ÿ' &-]/g, ' ').replace(/\s+/g, ' ').trim();
+  if(clean.length < 4 || clean.length > 40) return null;
+  // Un OCR qui derape produit une grappe de lettres accentuees ; un nom
+  // d'enseigne francais en a rarement plus d'une.
+  if((clean.match(/[À-ÿ]/g) || []).length > 1) return null;
+  const tokens = clean.split(' ').filter(Boolean);
+  // Deux fragments d'une ou deux lettres ou plus : signature typique du bruit
+  // ("TO SRE EkrRe-prax E", "mt es x", "LATS LES CHASSEURS VL es PE").
+  if(tokens.filter(t=> t.replace(/[^0-9a-zA-ZÀ-ÿ]/g,'').length <= 2).length >= 2) return null;
+  const words = tokens.filter(t=> /^[a-zA-ZÀ-ÿ'-]+$/.test(t) && t.length >= 3);
+  if(!words.length) return null;
+  // Tout mot d'au moins 3 lettres doit contenir une voyelle ("VLBKF", "PRN"
+  // et consorts sont des restes d'OCR, pas des mots).
+  if(!words.every(t=> /[aeiouyAEIOUY]/.test(t))) return null;
+  if(!words.some(t=> t.length >= 4)) return null;
+  const letters = (clean.match(/[a-zA-ZÀ-ÿ]/g) || []).length;
+  if(letters / clean.length < 0.6) return null;
+  if(OCR_NOISE_WORDS.test(normalize(clean))) return null;
+  return clean;
+}
+
+function extractBrand(text){
+  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  // L'enseigne est presque toujours dans les toutes premieres lignes du ticket.
+  // On ecarte les lignes qui ressemblent a un montant ou une date.
+  const isNoiseLine = (l) => /\btotal\b|\bttc\b|\d[.,]\d{2}|^\d{2}[\/\-.]\d{2}|^date\b/i.test(l);
+  const headerLines = lines.filter(l => !isNoiseLine(l)).slice(0, 5);
+  const header = normalize(headerLines.join(' '));
+
+  // 1) Correspondance exacte. Les marques de 4 caracteres ou moins doivent
+  //    correspondre en MOT ENTIER (evite "bp" ou "area" au milieu d'un mot).
+  for(const brand of KNOWN_BRANDS){
+    if(brand.match.length <= 4){
+      if(new RegExp(`\\b${brand.match}\\b`).test(header)){
+        return {label: brand.label, cat: brand.cat};
+      }
+    }else if(header.includes(brand.match)){
+      return {label: brand.label, cat: brand.cat};
+    }
+  }
+
+  // 2) Correspondance approchee, pour les en-tetes abimes par l'OCR. C'est ce
+  //    qui rattrape "T0TALENERG1ES", "CARREF0UR" ou "lNTERMARCHE".
+  const folded = ocrFold(header);
+  for(const brand of KNOWN_BRANDS){
+    if(brand.match.length < 5) continue;
+    if(fuzzyIncludes(folded, ocrFold(brand.match))){
+      return {label: brand.label, cat: brand.cat};
+    }
+  }
+
+  // 3) Repli : premiere ligne d'en-tete qui ressemble vraiment a un nom.
+  //    Si aucune ne passe le filtre, on renvoie null et le champ reste vide.
+  for(const line of headerLines){
+    const name = cleanName(line);
+    if(name) return {label: name, cat: null};
+  }
+  return {label: null, cat: null};
+}
+
+// Détecte les indices d'un ticket de péage. Utile quand la société d'autoroute
+// n'est pas reconnue comme enseigne (ticket de barrière, reçu de télépéage...).
+// normalize() retire les accents, donc "péage" devient "peage".
+function looksLikeToll(text){
+  const t = normalize(text);
+  return /\b(peage|telepeage|autoroute|autoroutes|classe [1-5]|badge telepeage)\b/.test(t);
+}
+
+// Détecte les indices d'un ticket d'entretien véhicule (garage, centre auto,
+// contrôle technique) quand l'enseigne n'est pas reconnue. Ces termes ne
+// figurent jamais sur un ticket de carburant ou de péage, donc ils sont fiables.
+function looksLikeMaintenance(text){
+  const t = normalize(text);
+  return /\b(controle technique|contre visite|vidange|revision|plaquettes|disques de frein|parallelisme|geometrie|equilibrage|amortisseurs?|courroie|distribution|embrayage|main d oeuvre|forfait entretien|pneus?|pneumatiques|montage pneu|meca|mecanique|garage|carrosserie|reparation|filtre a huile|filtre a air)\b/.test(t);
+}
+
+// Détecte le type de carburant mentionné sur le ticket et renvoie un libellé
+// propre (Diesel ou Essence). On couvre les appellations courantes des stations
+// françaises : gazole/diesel/GO d'un côté, SP95/SP98/E10/E85/sans plomb de l'autre.
+function extractFuelType(text){
+  const t = normalize(text);
+  // Diesel / gazole
+  if(/\b(diesel|gazole|gasoil|gas oil)\b/.test(t) || /\bgo\b/.test(t)){
+    return 'Diesel';
+  }
+  // Essence (sans plomb, SP95, SP98, E10, E85...)
+  if(/\b(essence|sans plomb|sp ?95|sp ?98|e10|e85|sp95 e10|excellium)\b/.test(t)){
+    return 'Essence';
+  }
+  return null;
+}
+
+// Detecte une adresse sur le ticket. Le repere fiable est le code postal
+// francais, mais un nombre a 5 chiffres n'est pas forcement un code postal :
+// c'etait la source des "27027 Zn" et "32429 VLBKF SAS" du fichier exporte.
+// On valide donc le departement ET la plausibilite de la ville.
+
+// Departements 01 a 95, plus 97x et 98x (outre-mer). 00, 96 et 99 n'existent pas.
+const CP_REGEX = /\b(0[1-9]|[1-8]\d|9[0-58])\d{3}\b/;
+
+// Retire les numeros de telephone, qui trainent souvent sur la meme ligne que
+// la ville et polluaient l'adresse ("24200 sT PONS 04 02 35 25 97").
+function stripPhones(line){
+  return line
+    .replace(/\b(?:\+33|0033)[\s.\-]?\d(?:[\s.\-]?\d{2}){4}\b/g, ' ')
+    .replace(/\b0\s?\d(?:[\s.\-]?\d{2}){4}\b/g, ' ');
+}
+
+function cleanupLine(line){
+  return line.replace(/[^0-9a-zA-ZÀ-ÿ' -]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Une ville plausible : au moins un mot d'au moins 3 lettres, uniquement des
+// lettres, et tous ces mots contiennent une voyelle.
+function plausibleCity(part){
+  const tokens = cleanupLine(part).split(' ').filter(Boolean);
+  if(!tokens.length) return false;
+  if((tokens.join('').match(/[À-ÿ]/g) || []).length > 1) return false;
+  const words = tokens.filter(t=> /^[a-zA-ZÀ-ÿ'-]+$/.test(t) && t.length >= 3);
+  if(!words.length) return false;
+  return words.every(t=> /[aeiouyAEIOUY]/.test(t));
+}
+
+// Les particules d'une lettre font partie du nom ("BERRE L ETANG") : on les
+// garde. La plausibilite est deja verifiee separement par plausibleCity.
+function cityWords(part){
+  return cleanupLine(part).split(' ')
+    .filter(t=> /^[a-zA-ZÀ-ÿ'-]+$/.test(t));
+}
+
+// Controle plus souple pour une ligne de rue : les adresses contiennent souvent
+// des abreviations sans voyelle ("RDN 113", "ZAC", "CD 10") qui feraient echouer
+// le test applique aux villes. On demande juste un vrai mot quelque part.
+function plausibleStreet(part){
+  const tokens = cleanupLine(part).split(' ').filter(Boolean);
+  if((tokens.join('').match(/[À-ÿ]/g) || []).length > 1) return false;
+  return tokens.some(t=> /^[a-zA-ZÀ-ÿ'-]+$/.test(t) && t.length >= 4 && /[aeiouyAEIOUY]/.test(t));
+}
+
+const VOIE_REGEX = /\b(rue|avenue|av|bd|boulevard|chemin|route|rte|place|impasse|allee|quai|cours|zone|za|zi|rn|cd|rd)\b/;
+
+function extractAddress(text){
+  const rawLines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+
+  for(let i=0; i<rawLines.length; i++){
+    const line = stripPhones(rawLines[i]);
+    const m = line.match(CP_REGEX);
+    if(!m) continue;
+    const cp = m[0];
+    const at = line.indexOf(cp);
+    const before = line.slice(0, at);
+    const after  = line.slice(at + cp.length);
+
+    // La ville suit normalement le code postal ; sinon (code postal en fin de
+    // ligne) on la cherche juste avant.
+    let city = '';
+    if(plausibleCity(after)){
+      city = cityWords(after).slice(0, 4).join(' ');
+    }else if(plausibleCity(before)){
+      city = cityWords(before).slice(-2).join(' ');
+    }
+    if(!city) continue;
+
+    let out = cp + ' ' + city;
+
+    // Rue : soit devant le code postal sur la meme ligne, soit sur la ligne
+    // precedente. On exige un mot-cle de voie pour ne pas ramasser n'importe quoi.
+    const sameLineStreet = cleanupLine(before);
+    if(sameLineStreet && VOIE_REGEX.test(normalize(sameLineStreet)) && plausibleStreet(sameLineStreet)){
+      out = sameLineStreet + ', ' + out;
+    }else if(i > 0){
+      const prev = cleanupLine(stripPhones(rawLines[i-1]));
+      if(/\d/.test(prev) && VOIE_REGEX.test(normalize(prev)) && plausibleStreet(prev)){
+        out = prev + ', ' + out;
+      }
+    }
+
+    if(out.length < 8 || out.length > 80) continue;
+    return out;
+  }
+  return null;
+}
+
+document.getElementById('saveBtn').addEventListener('click', async ()=>{
+  const amount = parseFloat(document.getElementById('amountInput').value);
+  const date = document.getElementById('dateInput').value;
+  const place = document.getElementById('placeInput').value.trim();
+  const address = document.getElementById('addressInput').value.trim();
+
+  if(!amount || amount <= 0){
+    showToast('Indique un montant valide');
+    return;
+  }
+  if(!date){
+    showToast('Indique une date');
+    return;
+  }
+
+  // Si la catégorie a été pré-sélectionnée automatiquement par l'OCR et que
+  // l'utilisateur n'a pas cliqué manuellement pour confirmer, on lui demande
+  // explicitement de valider avant d'enregistrer (plutôt que de compter sur
+  // le seul badge visuel, qui peut être manqué).
+  if(document.getElementById('catWarning').classList.contains('show')){
+    const catName = catLabel(currentCat);
+    const confirmed = confirm(`Catégorie détectée automatiquement : "${catName}".\n\nConfirmer cette catégorie ?`);
+    if(!confirmed){
+      return; // l'utilisateur reste sur le formulaire pour corriger manuellement
+    }
+    document.getElementById('catWarning').classList.remove('show');
+  }
+
+  const entry = {
+    id: editingId || (Date.now().toString(36) + Math.random().toString(36).slice(2,6)),
+    cat: currentCat,
+    amount: amount,
+    date: date,
+    place: place,
+    address: address,
+    // Photo justificative : la nouvelle si on en a pris une, sinon celle déjà
+    // associée au ticket en édition (pour ne pas la perdre lors d'une modif).
+    photo: currentPhotoData || editingPhoto || null
+  };
+
+  try{
+    await saveEntry(entry);
+    if(editingId){
+      // Mise à jour : on remplace l'entrée existante dans le tableau en mémoire
+      const idx = entries.findIndex(e=>e.id === editingId);
+      if(idx !== -1) entries[idx] = entry; else entries.unshift(entry);
+    }else{
+      entries.unshift(entry);
+    }
+    entries.sort((a,b)=> b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+    render();
+    closeSheet();
+    showToast(editingId ? 'Ticket mis à jour ✓' : 'Ticket enregistré ✓');
+    editingId = null;
+    editingPhoto = null;
+  }catch(e){
+    console.error(e);
+    showToast('Erreur lors de l\'enregistrement');
+  }
+});
+
+document.getElementById('deleteFromEditBtn').addEventListener('click', async ()=>{
+  if(!editingId) return;
+  if(confirm('Supprimer ce ticket ?')){
+    await deleteEntry(editingId);
+    editingId = null;
+    closeSheet();
+  }
+});
+
+// --- Export CSV ---
+function generateCSV(list, periodLabel){
+  if(list.length === 0){
+    showToast('Aucun ticket pour cette période');
+    return;
+  }
+  // Echappement CSV en bonne et due forme : un champ contenant un point-virgule,
+  // un guillemet ou un retour a la ligne est entoure de guillemets, les guillemets
+  // internes etant doubles. Avant, on remplacait les ';' par des ',' et un
+  // guillemet dans un nom de commerce pouvait decaler les colonnes.
+  const q = (v)=>{
+    const str = String(v == null ? '' : v);
+    return /[";\n\r]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str;
+  };
+  let csv = 'Date;Mois;Categorie;Montant;Lieu;Adresse;Justificatif\n';
+  const sorted = [...list].sort((a,b)=> a.date.localeCompare(b.date));
+  for(const e of sorted){
+    csv += [
+      fmtDate(e.date),
+      e.date.slice(0,7),
+      catLabel(e.cat),
+      e.amount.toFixed(2).replace('.',','),
+      q(e.place || ''),
+      q(e.address || ''),
+      e.photo ? 'Oui' : 'Non'
+    ].join(';') + '\n';
+  }
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const suffix = periodLabel ? '_' + periodLabel.replace(/[^0-9a-zA-Zà-ÿ]+/g,'-') : '';
+  a.download = `notes_frais${suffix}_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Export téléchargé');
+}
+
+// --- Export Excel (.xlsx) ---
+
+// Charge une librairie externe a la demande plutot qu'au demarrage : SheetJS pese
+// pres d'un mega-octet, inutile de l'imposer a chaque ouverture de l'appli.
+function loadScript(src, isReady){
+  if(isReady()) return Promise.resolve();
+  return new Promise((resolve, reject)=>{
+    const tag = document.createElement('script');
+    tag.src = src;
+    tag.onload = ()=> isReady() ? resolve() : reject(new Error('librairie chargée mais indisponible'));
+    tag.onerror = ()=> reject(new Error('échec du téléchargement'));
+    document.head.appendChild(tag);
+  });
+}
+
+// Numero de serie Excel (jours depuis le 30/12/1899), calcule en UTC pour ne
+// dependre ni du fuseau horaire ni de l'heure d'ete : une date de ticket n'a
+// pas d'heure, et un decalage suffirait a la faire basculer d'un jour.
+function excelSerial(iso){
+  const [y, m, d] = iso.split('-').map(Number);
+  return Math.round((Date.UTC(y, m-1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+}
+
+const FMT_DATE = 'dd/mm/yyyy';
+const FMT_EUR  = '#,##0.00\\ "€"';
+
+function buildWorkbook(XLSX, list, periodLabel){
+  const sorted = [...list].sort((a,b)=> a.date.localeCompare(b.date));
+  const n = sorted.length;
+  const lastRow = n + 1;                       // ligne 1 = en-tetes
+
+  // ---------- Feuille "Tickets" : le tableau de donnees, propre et filtrable ----------
+  const head = ['Date','Mois','Catégorie','Montant','Lieu','Adresse','Justificatif'];
+  const rows = sorted.map(e=>[
+    excelSerial(e.date),
+    e.date.slice(0,7),                         // "2026-08" : se trie correctement
+    catLabel(e.cat),
+    e.amount,
+    e.place || '',
+    e.address || '',
+    e.photo ? 'Oui' : 'Non'
+  ]);
+  const ws = XLSX.utils.aoa_to_sheet([head, ...rows]);
+  for(let r=2; r<=lastRow; r++){
+    const dc = ws['A'+r]; if(dc){ dc.t = 'n'; dc.z = FMT_DATE; }
+    const mc = ws['D'+r]; if(mc){ mc.t = 'n'; mc.z = FMT_EUR;  }
+  }
+  ws['!cols'] = [{wch:11},{wch:9},{wch:19},{wch:13},{wch:30},{wch:40},{wch:12}];
+  ws['!autofilter'] = {ref:`A1:G${lastRow}`};
+
+  // ---------- Feuille "Synthèse" ----------
+  // Chaque total porte SA FORMULE, qui se recalcule si un montant est corrige,
+  // ET sa valeur deja calculee, pour les lecteurs qui n'evaluent pas les formules
+  // (apercu mobile, visionneuses en ligne).
+  const AMOUNTS = `Tickets!$D$2:$D$${lastRow}`;
+  const CATCOL  = `Tickets!$C$2:$C$${lastRow}`;
+  const MOISCOL = `Tickets!$B$2:$B$${lastRow}`;
+
+  const sum = {};
+  const put = (col, r, cell)=>{ sum[col + r] = cell; };
+  const txt = (v)=>({t:'s', v});
+  const num = (v, f, z)=>{ const c = {t:'n', v}; if(f) c.f = f; if(z) c.z = z; return c; };
+  const round2 = (v)=> Math.round(v * 100) / 100;
+
+  let row = 1;
+  put('A', row, txt('Notes de frais — synthèse'));
+  row = 2;
+  put('A', row, txt('Période'));
+  put('B', row, txt(periodLabel || 'Toutes périodes'));
+  row = 3;
+  put('A', row, txt('Nombre de tickets'));
+  put('B', row, num(n, `COUNTA(${CATCOL})`));
+
+  row = 5;
+  put('A', row, txt('Total par catégorie'));
+  // On n'affiche que les categories reellement presentes sur la periode.
+  for(const c of CATEGORIES){
+    if(!sorted.some(e=>e.cat === c.id)) continue;
+    row++;
+    const total = sorted.filter(e=>e.cat === c.id).reduce((s,e)=>s+e.amount, 0);
+    put('A', row, txt(c.label));
+    put('B', row, num(round2(total), `SUMIF(${CATCOL},A${row},${AMOUNTS})`, FMT_EUR));
+  }
+  row++;
+  const grand = sorted.reduce((s,e)=>s+e.amount, 0);
+  put('A', row, txt('Total général'));
+  put('B', row, num(round2(grand), `SUM(${AMOUNTS})`, FMT_EUR));
+
+  row += 2;
+  put('A', row, txt('Total des lignes visibles (suit les filtres)'));
+  put('B', row, num(round2(grand), `SUBTOTAL(109,${AMOUNTS})`, FMT_EUR));
+
+  row += 2;
+  put('A', row, txt('Total par mois'));
+  for(const m of [...new Set(sorted.map(e=>e.date.slice(0,7)))].sort()){
+    row++;
+    const total = sorted.filter(e=>e.date.slice(0,7) === m).reduce((s,e)=>s+e.amount, 0);
+    put('A', row, txt(m));
+    put('B', row, num(round2(total), `SUMIF(${MOISCOL},A${row},${AMOUNTS})`, FMT_EUR));
+  }
+
+  sum['!ref']  = 'A1:B' + row;
+  sum['!cols'] = [{wch:42},{wch:16}];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Tickets');
+  XLSX.utils.book_append_sheet(wb, sum, 'Synthèse');
+  return wb;
+}
+
+async function generateXLSX(list, periodLabel){
+  if(list.length === 0){
+    showToast('Aucun ticket pour cette période');
+    return;
+  }
+  showToast('Génération du fichier Excel…');
+  try{
+    await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+                     ()=> !!window.XLSX);
+  }catch(err){
+    console.error('SheetJS indisponible :', err);
+    showToast('Librairie Excel non chargée — réessaie avec une connexion, ou exporte en CSV');
+    return;
+  }
+  try{
+    const wb = buildWorkbook(window.XLSX, list, periodLabel);
+    const suffix = periodLabel ? '_' + periodLabel.replace(/[^0-9a-zA-Zà-ÿ]+/g,'-') : '';
+    window.XLSX.writeFile(wb, `notes_frais${suffix}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast('Fichier Excel téléchargé ✓');
+  }catch(err){
+    console.error('Erreur génération Excel :', err);
+    showToast('Erreur lors de la génération du fichier Excel');
+  }
+}
+
+// --- Modale de choix de période pour l'export (partagée Excel + CSV + PDF) ---
+const exportSheet = document.getElementById('exportSheet');
+let exportFormat = 'xlsx'; // 'xlsx', 'csv' ou 'pdf'
+let exportMode = 'all';     // 'all' | 'month' | 'range'
+
+function openExportSheet(format){
+  exportFormat = format;
+  exportMode = 'all';
+  document.getElementById('exportTitle').textContent =
+    format === 'pdf'  ? 'Exporter le PDF justificatifs' :
+    format === 'csv'  ? 'Exporter le CSV' :
+                        'Exporter le fichier Excel';
+  // Réinitialise les modes
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active', b.dataset.mode==='all'));
+  document.getElementById('exportMonthField').style.display = 'none';
+  document.getElementById('exportRangeField').style.display = 'none';
+  // Peuple la liste des mois disponibles
+  const months = [...new Set(entries.map(e=>monthKeyISO(e.date)))].sort().reverse();
+  let opts = '';
+  for(const m of months){
+    const label = monthKey(m + '-01');
+    opts += `<option value="${m}">${label.charAt(0).toUpperCase()+label.slice(1)}</option>`;
+  }
+  document.getElementById('exportMonthSelect').innerHTML = opts || '<option value="">Aucun mois</option>';
+  // Pré-remplit les dates de la plage (du 1er du mois courant à aujourd'hui)
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('exportTo').value = today;
+  document.getElementById('exportFrom').value = today.slice(0,8) + '01';
+  overlay.classList.add('show');
+  exportSheet.classList.add('show');
+}
+function closeExportSheet(){
+  overlay.classList.remove('show');
+  exportSheet.classList.remove('show');
+}
+
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  if(entries.length === 0){ showToast('Aucun ticket à exporter'); return; }
+  openExportSheet('xlsx');
+});
+document.getElementById('doCsv').addEventListener('click', ()=>{
+  closeBackupMenu();
+  if(entries.length === 0){ showToast('Aucun ticket à exporter'); return; }
+  openExportSheet('csv');
+});
+document.getElementById('doPdf').addEventListener('click', ()=>{
+  closeBackupMenu();
+  if(entries.length === 0){ showToast('Aucun ticket à exporter'); return; }
+  openExportSheet('pdf');
+});
+
+document.querySelectorAll('.mode-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    exportMode = btn.dataset.mode;
+    document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active', b===btn));
+    document.getElementById('exportMonthField').style.display = exportMode === 'month' ? 'block' : 'none';
+    document.getElementById('exportRangeField').style.display = exportMode === 'range' ? 'block' : 'none';
+  });
+});
+
+document.getElementById('exportCancelBtn').addEventListener('click', closeExportSheet);
+
+document.getElementById('exportConfirmBtn').addEventListener('click', async ()=>{
+  let list = entries;
+  let periodLabel = '';
+
+  if(exportMode === 'month'){
+    const m = document.getElementById('exportMonthSelect').value;
+    if(!m){ showToast('Aucun mois sélectionné'); return; }
+    list = entries.filter(e=>monthKeyISO(e.date) === m);
+    periodLabel = monthKey(m + '-01');
+  }else if(exportMode === 'range'){
+    const from = document.getElementById('exportFrom').value;
+    const to = document.getElementById('exportTo').value;
+    if(!from || !to){ showToast('Choisis les deux dates'); return; }
+    if(from > to){ showToast('La date de début est après la date de fin'); return; }
+    list = entries.filter(e=> e.date >= from && e.date <= to);
+    periodLabel = `${fmtDate(from)} au ${fmtDate(to)}`;
+  }
+
+  closeExportSheet();
+  if(exportFormat === 'pdf'){
+    await generatePDF(list, periodLabel);
+  }else if(exportFormat === 'csv'){
+    generateCSV(list, periodLabel);
+  }else{
+    await generateXLSX(list, periodLabel);
+  }
+});
+
+document.getElementById('monthFilter').addEventListener('change', (ev)=>{
+  selectedMonth = ev.target.value;
+  render();
+});
+
+buildCategoryUI();
+loadEntries();
+</script>
+</body>
+</html>
