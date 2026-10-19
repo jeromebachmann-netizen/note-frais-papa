@@ -101,6 +101,16 @@
   .list{
     padding:8px 16px 20px;
   }
+  .backup-reminder{
+    display:none;margin:10px 20px 0;padding:12px 14px;
+    background:#fff6e0;border:1px solid #e3c877;border-radius:10px;
+    font-size:14px;line-height:1.4;
+  }
+  .backup-reminder.show{display:block;}
+  .backup-reminder button{
+    margin-top:8px;min-height:44px;padding:0 16px;border-radius:10px;
+    border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:600;cursor:pointer;
+  }
   .month-filter{
     padding:10px 16px 0;
   }
@@ -311,6 +321,11 @@
 
 <!-- Les cartes de totaux sont generees depuis CATEGORIES (voir buildCategoryUI). -->
 <div class="totals" id="totals"></div>
+
+<div class="backup-reminder" id="backupReminder">
+  <div id="backupReminderText"></div>
+  <button id="backupNowBtn">⬇ Sauvegarder maintenant</button>
+</div>
 
 <div class="month-filter">
   <select id="monthFilter">
@@ -553,7 +568,7 @@ async function saveEntry(entry){
   return new Promise((resolve, reject)=>{
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).put(entry);
-    tx.oncomplete = ()=> resolve();
+    tx.oncomplete = ()=>{ noteChange(); resolve(); };
     tx.onerror = ()=> reject(tx.error);
   });
 }
@@ -563,7 +578,7 @@ async function deleteEntry(id){
   await new Promise((resolve, reject)=>{
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).delete(id);
-    tx.oncomplete = ()=> resolve();
+    tx.oncomplete = ()=>{ noteChange(); resolve(); };
     tx.onerror = ()=> reject(tx.error);
   });
   entries = entries.filter(e=>e.id !== id);
@@ -616,6 +631,7 @@ function populateMonthFilter(){
 
 function render(){
   const list = document.getElementById('list');
+  updateBackupReminder();
   populateMonthFilter();
 
   // Entrées à afficher selon le filtre mois sélectionné
@@ -896,8 +912,40 @@ function getImageDims(dataUrl){
   });
 }
 
-document.getElementById('doExport').addEventListener('click', ()=>{
-  closeBackupMenu();
+// ---------- Rappel de sauvegarde ----------
+// Le navigateur ne permet pas d'ecrire un fichier tout seul : l'appli rappelle
+// donc de sauvegarder quand la derniere sauvegarde est ancienne ou quand
+// plusieurs tickets ont change depuis.
+const BACKUP_MAX_DAYS = 7;
+const BACKUP_MAX_CHANGES = 5;
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+
+function noteChange(){
+  lsSet('backupChanges', String((parseInt(lsGet('backupChanges'),10) || 0) + 1));
+  updateBackupReminder();
+}
+
+function updateBackupReminder(){
+  const box = document.getElementById('backupReminder');
+  if(entries.length === 0){ box.classList.remove('show'); return; }
+  const last = lsGet('lastBackup');
+  const changes = parseInt(lsGet('backupChanges'),10) || 0;
+  const days = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null;
+  let msg = null;
+  if(last === null){
+    msg = 'Tes tickets ne sont pas encore sauvegardés. Ils ne sont que sur cet appareil.';
+  }else if(days >= BACKUP_MAX_DAYS){
+    msg = 'Dernière sauvegarde il y a ' + days + ' jours.';
+  }else if(changes >= BACKUP_MAX_CHANGES){
+    msg = changes + ' modifications depuis la dernière sauvegarde.';
+  }
+  document.getElementById('backupReminderText').textContent = msg || '';
+  box.classList.toggle('show', !!msg);
+}
+
+function downloadBackup(){
   if(entries.length === 0){
     showToast('Aucune donnée à exporter');
     return;
@@ -912,8 +960,17 @@ document.getElementById('doExport').addEventListener('click', ()=>{
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  lsSet('lastBackup', new Date().toISOString());
+  lsSet('backupChanges', '0');
+  updateBackupReminder();
   showToast('Sauvegarde téléchargée');
+}
+
+document.getElementById('doExport').addEventListener('click', ()=>{
+  closeBackupMenu();
+  downloadBackup();
 });
+document.getElementById('backupNowBtn').addEventListener('click', downloadBackup);
 
 document.getElementById('doImport').addEventListener('click', ()=>{
   closeBackupMenu();
@@ -1912,7 +1969,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
