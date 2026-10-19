@@ -39,6 +39,16 @@
     margin:0 0 2px;
     letter-spacing:-0.01em;
   }
+  .topbar-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+  .version-box{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+  .version-label{font-size:11.5px;color:var(--muted);}
+  .refresh-btn{
+    min-width:44px;min-height:44px;border-radius:10px;
+    border:1px solid var(--line);background:var(--paper-raised);
+    color:var(--accent);font-size:20px;line-height:1;cursor:pointer;
+  }
+  .refresh-btn:active{background:var(--line);}
+  .refresh-btn.busy{opacity:.5;pointer-events:none;}
   .topbar .sub{
     font-size:12.5px;
     color:var(--muted);
@@ -289,7 +299,13 @@
 <body>
 
 <div class="topbar">
-  <h1>Notes de frais</h1>
+  <div class="topbar-row">
+    <h1>Notes de frais</h1>
+    <div class="version-box">
+      <span class="version-label" id="versionLabel"></span>
+      <button class="refresh-btn" id="refreshBtn" aria-label="Chercher une mise à jour" title="Chercher une mise à jour">↻</button>
+    </div>
+  </div>
   <div class="sub" id="subtitle"></div>
 </div>
 
@@ -1891,6 +1907,37 @@ document.getElementById('exportConfirmBtn').addEventListener('click', async ()=>
 document.getElementById('monthFilter').addEventListener('change', (ev)=>{
   selectedMonth = ev.target.value;
   render();
+});
+
+// ---------- Version & mise a jour ----------
+// A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
+// bouton ↻ compare avec la version publiee sur le site.
+const APP_VERSION = '1.0.0';
+
+document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
+
+document.getElementById('refreshBtn').addEventListener('click', async (ev)=>{
+  const btn = ev.currentTarget;
+  btn.classList.add('busy');
+  try{
+    // On interroge le serveur en contournant le cache pour lire la version en ligne.
+    const res = await fetch(location.pathname + '?check=' + Date.now(), {cache:'no-store'});
+    const m = (await res.text()).match(/const APP_VERSION = '([^']+)'/);
+    const online = m ? m[1] : null;
+    if(online && online !== APP_VERSION){
+      showToast('Nouvelle version v' + online + ' — mise à jour…');
+    }else{
+      showToast('Déjà à jour (v' + APP_VERSION + ')');
+      btn.classList.remove('busy');
+      return;
+    }
+  }catch(e){
+    showToast('Pas de connexion — impossible de vérifier');
+    btn.classList.remove('busy');
+    return;
+  }
+  // Rechargement avec un parametre unique pour forcer le navigateur a ignorer son cache.
+  setTimeout(()=>{ location.replace(location.pathname + '?v=' + Date.now()); }, 700);
 });
 
 buildCategoryUI();
