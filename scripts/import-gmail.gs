@@ -118,14 +118,14 @@ function testJustificatifs(){ justificatifs_(true); }
 function ajouterJustificatifs(){ justificatifs_(false); }
 
 function justificatifs_(dry){
-  const sansPhoto = lireSansPhoto_();
-  Logger.log('Tickets sans justificatif dans la base : ' + sansPhoto.size);
-  let n = 0;
+  let n = 0, deja = 0, absents = 0;
   for(const src of SOURCES.filter(s=>s.pj)){
     for(const thread of GmailApp.search(src.query + ' after:' + ANNEE + '/01/01', 0, 100)){
       for(const msg of thread.getMessages()){
         const id = 'mail_' + msg.getId();
-        if(!sansPhoto.has(id)) continue;
+        const etat = etatPhoto_(id);
+        if(etat === 'absent'){ absents++; Logger.log('TICKET ABSENT ' + src.nom + ' ' + id + ' (non cree par le script)'); continue; }
+        if(etat === 'present'){ deja++; continue; }
         const photo = justificatif_(msg);
         if(!photo){ Logger.log('PAS DE JUSTIFICATIF ' + src.nom + ' ' + id); continue; }
         Logger.log((dry ? 'A COMPLETER ' : 'COMPLETE ') + src.nom + ' ' + id + ' (image ' + Math.round(photo.length/1000) + ' Ko)');
@@ -134,7 +134,7 @@ function justificatifs_(dry){
       }
     }
   }
-  Logger.log((dry ? 'Simulation : ' : 'Termine : ') + n + ' justificatif(s)');
+  Logger.log((dry ? 'Simulation : ' : 'Termine : ') + n + ' justificatif(s) · ' + deja + ' deja present(s) · ' + absents + ' ticket(s) absent(s)');
 }
 
 // ---------- Lecture des mails ----------
@@ -251,17 +251,12 @@ function lireExistants_(){
   return {liste, numeros};
 }
 
-// Identifiants des tickets dont le justificatif est vide (on ne lit que les noms, pas les photos).
-function lireSansPhoto_(){
-  const rep = UrlFetchApp.fetch(base_() + ':runQuery', {method:'post', contentType:'application/json', headers:auth_(),
-    payload: JSON.stringify({structuredQuery:{from:[{collectionId:'tickets'}],
-      select:{fields:[{fieldPath:'date'}]},
-      where:{fieldFilter:{field:{fieldPath:'photo'}, op:'EQUAL', value:{nullValue:null}}}}})});
-  const ids = new Set();
-  for(const r of JSON.parse(rep.getContentText())){
-    if(r.document) ids.add(r.document.name.split('/').pop());
-  }
-  return ids;
+// 'absent' (pas de ticket cree par le script pour ce mail), 'present' (justificatif deja la) ou 'vide'.
+function etatPhoto_(id){
+  const rep = UrlFetchApp.fetch(base_() + '/tickets/' + id + '?mask.fieldPaths=photo', {headers:auth_(), muteHttpExceptions:true});
+  if(rep.getResponseCode() === 404) return 'absent';
+  const f = JSON.parse(rep.getContentText()).fields || {};
+  return f.photo && f.photo.stringValue ? 'present' : 'vide';
 }
 
 function ajouterPhoto_(id, photo){
