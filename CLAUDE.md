@@ -40,3 +40,8 @@ Ouvrir `index.html` dans un navigateur, ou lancer un petit serveur local (`pytho
 ## Historique
 
 Le dépôt a été créé avec des envois de fichiers via l'interface web de GitHub (d'où les commits « Add files via upload »). Pour les prochaines mises à jour, passer par git en local et faire des commits clairs.
+
+## Import automatique depuis Gmail
+
+`scripts/import-gmail.gs` n'est **pas** une partie de l'appli : c'est un script Google Apps Script à coller dans script.google.com (compte Gmail de l'utilisateur). Il lit les reçus Esso (PDF), les factures Free Mobile / Freebox et les reçus Anthropic (texte des mails) et écrit les tickets dans Firestore via un compte de service. La clé du compte de service reste dans les propriétés du script, jamais dans le dépôt.
+
