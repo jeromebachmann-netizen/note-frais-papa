@@ -15,7 +15,7 @@ Petite appli web pour enregistrer ses notes de frais : on photographie un ticket
 
 ## Repères dans `index.html`
 
-- `CATEGORIES` (~l.426) : source unique des catégories. Pour en ajouter une, ajouter une ligne ; l'interface, les totaux, le PDF et le CSV s'adaptent. **Ne jamais changer l'`id` d'une catégorie déjà utilisée**, sinon les tickets existants la perdent. La dernière catégorie sert de repli.
+- `CATEGORIES` (~l.426) : source unique des catégories de base. Depuis la v2.3.0, l'utilisateur peut aussi ajouter ses catégories dans l'appli (menu Sauvegarde → Gérer les catégories) : elles sont rangées avant la dernière (`other`), gardées dans `localStorage` (`customCats`) et synchronisées dans Firestore (`users/<uid>/meta/categories`). Leurs ids commencent par `c_`. Pour en ajouter une, ajouter une ligne ; l'interface, les totaux, le PDF et le CSV s'adaptent. **Ne jamais changer l'`id` d'une catégorie déjà utilisée**, sinon les tickets existants la perdent. La dernière catégorie sert de repli.
 - Base de données : `openDB`, `loadEntries`, `saveEntry`, `deleteEntry`, `importEntries`.
 - Rendu : `render`, `openSheet` (formulaire ticket), `populateMonthFilter`.
 - OCR : `preprocessForOCR` (nettoyage de l'image), `runOCR`, puis les extracteurs `extractAmount`, `extractDate`, `extractBrand` (liste `KNOWN_BRANDS`), `extractFuelType`, `extractAddress`. C'est la partie la plus délicate : la lecture des tickets thermiques est imparfaite, d'où les heuristiques et la distance de Levenshtein.

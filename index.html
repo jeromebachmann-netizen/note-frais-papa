@@ -101,6 +101,12 @@
   .list{
     padding:8px 16px 20px;
   }
+  .cat-manage-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:15px;}
+  .cat-manage-row .grow{flex:1;}
+  .cat-manage-row button{min-height:40px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--paper-raised);color:var(--danger);cursor:pointer;}
+  .swatches{display:flex;flex-wrap:wrap;gap:10px;}
+  .swatch{width:40px;height:40px;border-radius:50%;border:3px solid transparent;cursor:pointer;padding:0;}
+  .swatch.active{border-color:var(--ink);}
   .receipt-row{
     display:flex;gap:10px;align-items:flex-start;padding:10px 0;
     border-bottom:1px solid var(--line);font-size:14px;
@@ -374,6 +380,10 @@
     Exporter la sauvegarde
     <span class="desc">Télécharge un fichier .json à transférer sur un autre appareil</span>
   </button>
+  <button id="doCats">
+    🏷 Gérer les catégories
+    <span class="desc">Ajouter ou supprimer tes propres catégories (elles se synchronisent)</span>
+  </button>
   <button id="doReceipts">
     📥 Importer des reçus (PDF)
     <span class="desc">Lit les reçus carburant en PDF reçus par mail, tu valides avant l'ajout</span>
@@ -427,6 +437,27 @@
 </div>
 
 <input type="file" id="receiptInput" accept="application/pdf" multiple style="display:none;">
+<div class="sheet" id="catSheet">
+  <h2>Mes catégories</h2>
+  <div id="catManageList"></div>
+  <div class="field" style="margin-top:14px;">
+    <label>Nouvelle catégorie</label>
+    <input type="text" id="newCatName" maxlength="30" placeholder="Ex. Assurance">
+  </div>
+  <div class="field">
+    <label>Symbole (facultatif)</label>
+    <input type="text" id="newCatEmoji" maxlength="4" placeholder="🏷">
+  </div>
+  <div class="field">
+    <label>Couleur</label>
+    <div class="swatches" id="newCatColors"></div>
+  </div>
+  <div class="sheet-actions">
+    <button class="btn-cancel" id="catCloseBtn">Fermer</button>
+    <button class="btn-save" id="catAddBtn">Ajouter</button>
+  </div>
+</div>
+
 <div class="sheet" id="receiptSheet">
   <h2>Reçus à valider</h2>
   <div class="sub" id="receiptSummary" style="margin-bottom:8px;"></div>
@@ -808,7 +839,7 @@ function closeSheet(){
 
 document.getElementById('addBtn').addEventListener('click', ()=> openSheet());
 document.getElementById('cancelBtn').addEventListener('click', closeSheet);
-overlay.addEventListener('click', ()=>{ closeSheet(); closeBackupMenu(); closeExportSheet(); closeReceiptSheet(); });
+overlay.addEventListener('click', ()=>{ closeSheet(); closeBackupMenu(); closeExportSheet(); closeReceiptSheet(); closeCatSheet(); });
 
 // --- Backup menu (export/import JSON pour synchro tel/PC) ---
 const backupMenu = document.getElementById('backupMenu');
@@ -2008,7 +2039,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
@@ -2177,6 +2208,121 @@ document.getElementById('receiptConfirmBtn').addEventListener('click', async ()=
   showToast(picked.length + ' ticket(s) ajouté(s)');
 });
 
+// ---------- Categories personnalisees ----------
+// Les categories de CATEGORIES sont la base. L'utilisateur peut en ajouter ;
+// elles sont rangees avant la derniere (« Autre », qui sert de repli), gardees
+// dans le navigateur et synchronisees via Firebase.
+const BASE_CATEGORIES = CATEGORIES.slice();
+const CAT_PALETTE = [
+  {color:'#b0392c', bg:'#f7e3e0'}, {color:'#b7791f', bg:'#faf0d9'}, {color:'#5b7a1f', bg:'#ecf2dc'},
+  {color:'#1f7a6b', bg:'#dff2ee'}, {color:'#2b5fa8', bg:'#e1ebf8'}, {color:'#6b4aa8', bg:'#ece5f7'},
+  {color:'#a8467a', bg:'#f7e3ee'}, {color:'#5a5a5a', bg:'#e8e8e8'}
+];
+let customCats = [];
+let newCatColor = CAT_PALETTE[0].color;
+
+// Nettoie une liste venue du navigateur ou du cloud (jamais de HTML, couleurs connues).
+function cleanCats(list){
+  if(!Array.isArray(list)) return [];
+  return list.filter(c=>c && typeof c.id === 'string' && /^c_[a-z0-9]+$/.test(c.id)).slice(0, 12).map(c=>{
+    const pal = CAT_PALETTE.find(p=>p.color === c.color) || CAT_PALETTE[0];
+    return {
+      id: c.id,
+      label: String(c.label || '').replace(/[<>&"']/g,'').trim().slice(0,30) || 'Catégorie',
+      emoji: Array.from(String(c.emoji || '🏷')).slice(0,2).join(''),
+      color: pal.color, bg: pal.bg
+    };
+  });
+}
+
+function applyCustomCats(){
+  const fallback = BASE_CATEGORIES[BASE_CATEGORIES.length-1];
+  CATEGORIES.length = 0;
+  CATEGORIES.push(...BASE_CATEGORIES.slice(0,-1), ...customCats, fallback);
+}
+
+function refreshCategories(){
+  applyCustomCats();
+  if(!CATEGORIES.some(c=>c.id === currentCat)) currentCat = CATEGORIES[0].id;
+  buildCategoryUI();
+  render();
+  renderCatManager();
+}
+
+function loadCustomCats(){
+  try{ customCats = cleanCats(JSON.parse(lsGet('customCats') || '[]')); }catch(e){ customCats = []; }
+}
+
+function saveCustomCats(){
+  lsSet('customCats', JSON.stringify(customCats));
+  cloudSaveCats();
+  refreshCategories();
+}
+
+const catSheet = document.getElementById('catSheet');
+function closeCatSheet(){
+  overlay.classList.remove('show');
+  catSheet.classList.remove('show');
+}
+
+function renderCatManager(){
+  document.getElementById('catManageList').innerHTML = customCats.length
+    ? customCats.map(c=>`
+      <div class="cat-manage-row">
+        <span>${c.emoji}</span><span class="grow">${escapeHtml(c.label)}</span>
+        <button data-del="${c.id}">Supprimer</button>
+      </div>`).join('')
+    : '<div class="sub">Aucune catégorie ajoutée pour l\'instant.</div>';
+  document.getElementById('newCatColors').innerHTML = CAT_PALETTE.map(p=>
+    `<button type="button" class="swatch${p.color === newCatColor ? ' active' : ''}" data-color="${p.color}" style="background:${p.color};" aria-label="Couleur"></button>`).join('');
+}
+
+document.getElementById('doCats').addEventListener('click', ()=>{
+  closeBackupMenu();
+  renderCatManager();
+  overlay.classList.add('show');
+  catSheet.classList.add('show');
+});
+document.getElementById('catCloseBtn').addEventListener('click', closeCatSheet);
+
+document.getElementById('newCatColors').addEventListener('click', (ev)=>{
+  const b = ev.target.closest('[data-color]');
+  if(!b) return;
+  newCatColor = b.dataset.color;
+  renderCatManager();
+});
+
+document.getElementById('catAddBtn').addEventListener('click', ()=>{
+  const nameEl = document.getElementById('newCatName');
+  const name = nameEl.value.replace(/[<>&"']/g,'').trim();
+  if(!name){ showToast('Donne un nom à la catégorie'); return; }
+  if(CATEGORIES.some(c=>c.label.toLowerCase() === name.toLowerCase())){ showToast('Cette catégorie existe déjà'); return; }
+  if(customCats.length >= 12){ showToast('12 catégories ajoutées au maximum'); return; }
+  const pal = CAT_PALETTE.find(p=>p.color === newCatColor) || CAT_PALETTE[0];
+  customCats.push({
+    id: 'c_' + Date.now().toString(36),
+    label: name.slice(0,30),
+    emoji: Array.from(document.getElementById('newCatEmoji').value.trim() || '🏷').slice(0,2).join(''),
+    color: pal.color, bg: pal.bg
+  });
+  nameEl.value = '';
+  document.getElementById('newCatEmoji').value = '';
+  saveCustomCats();
+  showToast('Catégorie ajoutée');
+});
+
+document.getElementById('catManageList').addEventListener('click', async (ev)=>{
+  const b = ev.target.closest('[data-del]');
+  if(!b) return;
+  const cat = customCats.find(c=>c.id === b.dataset.del);
+  if(!cat || !confirm('Supprimer « ' + cat.label + ' » ? Ses tickets passeront en « ' + BASE_CATEGORIES[BASE_CATEGORIES.length-1].label + ' ».')) return;
+  const fallbackId = BASE_CATEGORIES[BASE_CATEGORIES.length-1].id;
+  for(const e of entries.filter(e=>e.cat === cat.id)) await saveEntry({...e, cat: fallbackId});
+  customCats = customCats.filter(c=>c.id !== cat.id);
+  saveCustomCats();
+  await loadEntries();
+});
+
 // ---------- Synchronisation Firebase ----------
 // Les tickets restent dans IndexedDB (l'appli marche hors ligne) et sont aussi
 // copies dans Firestore, sous users/<uid>/tickets/<id>, pour etre retrouves sur
@@ -2197,6 +2343,8 @@ let cloudCol = null;
 let cloudUnsub = null;
 let cloudUser = null;
 let cloudWarned = false;
+let cloudCatsDoc = null;
+let cloudCatsUnsub = null;
 
 function setCloudUI(status){
   const btn = document.getElementById('cloudBtn');
@@ -2216,6 +2364,11 @@ function cloudPut(entry){
     console.error('Sync', err);
     if(!cloudWarned){ cloudWarned = true; showToast('Synchronisation impossible — ' + (err.code || 'erreur')); }
   });
+}
+
+function cloudSaveCats(){
+  if(!cloudCatsDoc) return;
+  cloudCatsDoc.set({list: JSON.stringify(customCats)}).catch(err=>console.error('Sync', err));
 }
 
 function cloudDelete(id){
@@ -2243,7 +2396,9 @@ async function applyRemote(snap){
 
 async function onAuthChange(user){
   if(cloudUnsub){ cloudUnsub(); cloudUnsub = null; }
+  if(cloudCatsUnsub){ cloudCatsUnsub(); cloudCatsUnsub = null; }
   cloudCol = null;
+  cloudCatsDoc = null;
   cloudUser = user;
   setCloudUI();
   if(!user) return;
@@ -2255,6 +2410,18 @@ async function onAuthChange(user){
     entries.forEach(cloudPut);
     lsSet(flag, '1');
   }
+  cloudCatsDoc = fbDb.collection('users').doc(user.uid).collection('meta').doc('categories');
+  cloudCatsUnsub = cloudCatsDoc.onSnapshot(snap=>{
+    if(snap.metadata.hasPendingWrites) return;
+    if(!snap.exists){ if(customCats.length) cloudSaveCats(); return; }
+    let remote;
+    try{ remote = cleanCats(JSON.parse(snap.data().list)); }catch(e){ return; }
+    if(JSON.stringify(remote) !== JSON.stringify(customCats)){
+      customCats = remote;
+      lsSet('customCats', JSON.stringify(customCats));
+      refreshCategories();
+    }
+  }, err=>console.error('Sync', err));
   cloudUnsub = cloudCol.onSnapshot(snap=>{
     applyRemote(snap).catch(e=>console.error('Sync', e));
     setCloudUI();
@@ -2293,6 +2460,8 @@ document.getElementById('cloudBtn').addEventListener('click', async ()=>{
   }
 });
 
+loadCustomCats();
+applyCustomCats();
 buildCategoryUI();
 setCloudUI();
 loadEntries().then(initCloud);
