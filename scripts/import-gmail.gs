@@ -37,6 +37,7 @@ function importer(){ run_(false); }
 
 function run_(dry){
   const existants = lireExistants_();
+  Logger.log('Tickets deja dans la base : ' + existants.liste.length);
   const label = dry ? null : (GmailApp.getUserLabelByName(LABEL) || GmailApp.createLabel(LABEL));
   let ajoutes = 0;
   for(const src of SOURCES){
@@ -46,9 +47,12 @@ function run_(dry){
       for(const msg of thread.getMessages()){
         let r = null;
         try{
-          r = src.pdf ? lireEsso_(msg) : src.parse(msg.getPlainBody());
+          r = src.pdf ? lireEsso_(msg) : lireTexte_(msg, src.parse);
         }catch(e){ Logger.log('ERREUR ' + src.nom + ' : ' + e); traite = false; continue; }
-        if(!r){ Logger.log('ILLISIBLE ' + src.nom + ' : ' + msg.getSubject()); traite = false; continue; }
+        if(!r){
+          Logger.log('ILLISIBLE ' + src.nom + ' : ' + msg.getSubject() + ' | ' + extrait_(msg));
+          traite = false; continue;
+        }
         if(r.date.slice(0,4) !== ANNEE) continue;
         const recu = r.receiptNo || ('mail:' + msg.getId());
         const doublon = existants.numeros.has(recu) ||
@@ -90,10 +94,26 @@ function parseFreebox(t){
   return d && m && mo ? { date: iso_(d[1], mo, d[3]), amount: nombre_(m[1]) } : null;
 }
 function parseAnthropic(t){
-  const m = t.match(/€\s*([\d.,]+)\s*Paid on ([A-Za-z]+) (\d{1,2}), (\d{4})/);
+  const m = t.match(/€\s*([\d.,]+)\s*Paid (?:on )?([A-Za-z]+) (\d{1,2}), (\d{4})/);
   const n = t.match(/Receipt #(\d{4}-\d{4})/);
   const mo = m && mois_(m[2]);
   return m && mo ? { date: iso_(m[3], mo, m[4]), amount: nombre_(m[1]), receiptNo: n ? 'anthropic:' + n[1] : null } : null;
+}
+
+// Texte brut du mail, puis, si besoin, version HTML sans balises.
+function lireTexte_(msg, parse){
+  return parse(msg.getPlainBody()) || parse(htmlEnTexte_(msg.getBody()));
+}
+function htmlEnTexte_(h){
+  return h.replace(/<(style|script)[\s\S]*?<\/\1>/gi,' ').replace(/<[^>]+>/g,' ')
+    .replace(/&nbsp;/g,' ').replace(/&euro;/g,'€').replace(/&#8217;|&rsquo;/g,"'").replace(/&amp;/g,'&')
+    .replace(/\s+/g,' ');
+}
+// Pour comprendre un echec : quelques mots autour du mot "montant" ou "Paid".
+function extrait_(msg){
+  const t = htmlEnTexte_(msg.getBody());
+  const i = Math.max(t.search(/montant|Paid/i), 0);
+  return t.slice(Math.max(i - 60, 0), i + 100);
 }
 
 // Esso : le montant est dans le PDF joint, lu par la conversion en document Google (service Drive).
@@ -110,15 +130,18 @@ function lireEsso_(msg){
   return null;
 }
 function parseEsso(texte){
-  const lignes = texte.split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean);
+  // La conversion Google peut coller les lignes ensemble : on prend ce qui precede "TVA".
+  const entete = texte.replace(/\s+/g,' ').trim().split(/ TVA\b/)[0];
+  const mm = entete.match(/^(.*?)\s*(\d{5}\s+.+)$/);
+  const tete = mm ? {place: mm[1], address: mm[2]} : {place: entete.slice(0, 60), address: ''};
   const d = texte.match(/Date\s+(\d{2})-(\d{2})-(\d{4})/);
   const m = texte.match(/TOT\s*TTC\s*\S{0,2}\s*(\d+[.,]\d{2})/);
   const n = texte.match(/No\.?\s*ticket\s+(\d+)/);
   if(!d || !m) return null;
   return {
     date: iso_(d[1], d[2], d[3]), amount: nombre_(m[1]),
-    place: lignes[0] && !/^(TVA|Date)/i.test(lignes[0]) ? lignes[0] : '',
-    address: lignes[1] && /^\d{5}\s/.test(lignes[1]) ? lignes[1] : '',
+    place: tete.place,
+    address: tete.address,
     receiptNo: n ? n[1] : null
   };
 }
