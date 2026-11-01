@@ -409,6 +409,8 @@
     <span id="photoLabel">📷 Prendre / choisir une photo du ticket</span>
     <input type="file" id="photoInput" accept="image/*" capture="environment">
   </div>
+  <button type="button" class="btn-cancel" id="pdfBtn" style="width:100%;margin-top:8px;min-height:48px;border-radius:10px;font-size:15px;cursor:pointer;">📄 Choisir une facture PDF</button>
+  <input type="file" id="pdfInput" accept="application/pdf" style="display:none;">
   <div class="ocr-status" id="ocrStatus"></div>
 
   <div class="field">
@@ -798,6 +800,7 @@ function openSheet(editEntry){
   document.getElementById('photoLabel').textContent = '📷 Prendre / choisir une photo du ticket';
   document.getElementById('ocrStatus').textContent = '';
   document.getElementById('photoInput').value = '';
+  document.getElementById('pdfInput').value = '';
   document.getElementById('catWarning').classList.remove('show');
 
   if(editEntry && editEntry.id){
@@ -2039,7 +2042,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
@@ -2099,26 +2102,146 @@ function parseReceiptText(text){
   };
 }
 
-async function readPdfText(file){
-  await loadScript(PDFJS_URL, ()=> !!window.pdfjsLib);
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-  const pdf = await window.pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
-  let out = '';
-  for(let i = 1; i <= pdf.numPages; i++){
-    const content = await (await pdf.getPage(i)).getTextContent();
-    // On regroupe les morceaux de texte par ligne (meme hauteur), de gauche a droite.
-    const rows = new Map();
-    for(const it of content.items){
-      const y = Math.round(it.transform[5]);
-      if(!rows.has(y)) rows.set(y, []);
-      rows.get(y).push(it);
-    }
-    [...rows.keys()].sort((a,b)=>b-a).forEach(y=>{
-      out += rows.get(y).sort((a,b)=>a.transform[4]-b.transform[4]).map(i=>i.str).join(' ') + '\n';
-    });
+// Texte d'une page : morceaux regroupes par ligne (meme hauteur), de gauche a droite.
+async function pdfPageText(page){
+  const content = await page.getTextContent();
+  const rows = new Map();
+  for(const it of content.items){
+    const y = Math.round(it.transform[5]);
+    if(!rows.has(y)) rows.set(y, []);
+    rows.get(y).push(it);
   }
+  let out = '';
+  [...rows.keys()].sort((a,b)=>b-a).forEach(y=>{
+    out += rows.get(y).sort((a,b)=>a.transform[4]-b.transform[4]).map(i=>i.str).join(' ') + '\n';
+  });
   return out;
 }
+
+async function openPdf(file){
+  await loadScript(PDFJS_URL, ()=> !!window.pdfjsLib);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+  return window.pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+}
+
+async function readPdfText(file){
+  const pdf = await openPdf(file);
+  let out = '';
+  for(let i = 1; i <= pdf.numPages; i++) out += await pdfPageText(await pdf.getPage(i));
+  return out;
+}
+
+// Texte du PDF + image JPEG de la 1re page (servira de justificatif).
+async function readPdfFull(file){
+  const pdf = await openPdf(file);
+  let text = '';
+  for(let i = 1; i <= Math.min(pdf.numPages, 5); i++) text += await pdfPageText(await pdf.getPage(i));
+  const page = await pdf.getPage(1);
+  const base = page.getViewport({scale:1});
+  const viewport = page.getViewport({scale: Math.min(2, 1400 / Math.max(base.width, base.height))});
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(viewport.width);
+  canvas.height = Math.round(viewport.height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({canvasContext: ctx, viewport}).promise;
+  return {text, image: canvas.toDataURL('image/jpeg', 0.7)};
+}
+
+// ---------- Facture PDF quelconque (depuis le formulaire) ----------
+function parseAmountString(str){
+  let t = String(str).replace(/[\s\u00a0]/g,'');
+  const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
+  if(c >= 0 && d >= 0) t = c > d ? t.replace(/\./g,'').replace(',','.') : t.replace(/,/g,'');
+  else if(c >= 0) t = t.replace(',','.');
+  else if(d >= 0 && t.length - d - 1 === 3) t = t.replace('.','');
+  const n = parseFloat(t);
+  return n > 0 ? n : null;
+}
+
+// Cherche un montant a cote des libelles usuels, du plus fiable au moins fiable.
+function extractPdfAmount(text){
+  const NUM = '(\\d[\\d\\s\\u00a0.,]*\\d|\\d)';
+  const tiers = [
+    'net\\s+[àa]\\s+payer|montant\\s+(?:total\\s+)?[àa]\\s+payer|total\\s+[àa]\\s+payer|amount\\s+due|amount\\s+paid|montant\\s+d[ûu]|total\\s+ttc|montant\\s+ttc|total\\s+t\\.t\\.c',
+    'total\\s+g[ée]n[ée]ral|total\\s+facture|total'
+  ];
+  for(const labels of tiers){
+    const re = new RegExp('(?:' + labels + ')[^\\d\\n]{0,25}' + NUM + '\\s*(?:€|eur)?', 'gi');
+    let best = null, m;
+    while((m = re.exec(text))){
+      const n = parseAmountString(m[1]);
+      if(n && (!best || n > best)) best = n;
+    }
+    if(best) return best;
+  }
+  return null;
+}
+
+function extractPdfDate(text){
+  const NUMDATE = '(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{4})';
+  const iso = (j,m,a)=> a + '-' + String(m).padStart(2,'0') + '-' + String(j).padStart(2,'0');
+  const labeled = text.match(new RegExp('(?:date\\s+(?:de\\s+)?(?:la\\s+)?(?:facture|[ée]mission|d\\W?[ée]mission)|facture\\s+du|invoice\\s+date|date)\\s*:?\\s*' + NUMDATE, 'i'));
+  if(labeled) return iso(labeled[1], labeled[2], labeled[3]);
+  const mois = {janvier:1,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,aout:8,septembre:9,octobre:10,novembre:11,decembre:12};
+  const lm = text.match(/(\d{1,2})\s+(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\s+(\d{4})/i);
+  if(lm) return iso(lm[1], mois[lm[2].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')], lm[3]);
+  const any = text.match(new RegExp(NUMDATE));
+  return any ? iso(any[1], any[2], any[3]) : null;
+}
+
+// Emetteur : enseigne connue, sinon premiere ligne qui ressemble a un nom.
+function extractPdfIssuer(text){
+  const brand = extractBrand(text);
+  if(brand.label) return brand.label;
+  for(const l of text.split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim())){
+    if(l.length >= 3 && l.length <= 50 && /[A-Za-zÀ-ÿ]{3}/.test(l) && !/^(facture|invoice|avoir|re[cç]u|receipt|page|date|n[°o]|www|http)/i.test(l)) return l;
+  }
+  return '';
+}
+
+document.getElementById('pdfBtn').addEventListener('click', ()=> document.getElementById('pdfInput').click());
+
+document.getElementById('pdfInput').addEventListener('change', async (ev)=>{
+  const file = ev.target.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('ocrStatus');
+  statusEl.textContent = '🔍 Lecture de la facture…';
+  try{
+    const {text, image} = await readPdfFull(file);
+    currentPhotoData = image;
+    document.getElementById('photoLabel').innerHTML = `<img src="${image}">Facture chargée — appuie pour changer`;
+    let body = text;
+    if(body.replace(/\s/g,'').length < 40){
+      // PDF scanne (une image) : pas de texte, on tente l'OCR sur la page.
+      statusEl.textContent = '🔍 PDF scanné, lecture par OCR…';
+      body = await runOCR(image, ()=>{});
+    }
+    const amount = extractPdfAmount(body) || extractAmount(body);
+    const date = extractPdfDate(body) || extractDate(body);
+    const issuer = extractPdfIssuer(body);
+    const brand = extractBrand(body);
+    if(amount) document.getElementById('amountInput').value = amount;
+    if(date) document.getElementById('dateInput').value = date;
+    if(issuer && !document.getElementById('placeInput').value) document.getElementById('placeInput').value = issuer;
+    if(brand.cat){
+      currentCat = brand.cat;
+      syncCatButtons();
+      document.getElementById('catWarning').classList.add('show');
+    }
+    const parts = [];
+    if(issuer) parts.push('émetteur');
+    if(amount) parts.push('montant');
+    if(date) parts.push('date');
+    statusEl.textContent = parts.length
+      ? `✓ Détecté : ${parts.join(', ')} — vérifie, et choisis la catégorie`
+      : '⚠ Rien détecté automatiquement, complète manuellement (la facture est conservée comme justificatif)';
+  }catch(err){
+    console.error('PDF', err);
+    statusEl.textContent = '⚠ Lecture impossible (' + ((err && err.message) || 'erreur') + ') — complète manuellement.';
+  }
+});
 
 // Deja present : meme numero de ticket, ou (anciens tickets sans numero) meme date et meme montant.
 function isKnownReceipt(r, seen){
