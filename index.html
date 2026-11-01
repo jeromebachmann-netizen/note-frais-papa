@@ -84,6 +84,9 @@
   .total-card.grand .label{color:rgba(247,245,240,0.7);margin-bottom:0;}
   .total-card.grand .amount{color:var(--paper);font-size:19px;}
   .total-card{border-left:4px solid var(--c,var(--muted));}
+  .total-card[data-cat], .total-card.grand.filtered{cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .total-card[data-cat].active{outline:2px solid var(--c);outline-offset:-2px;background:var(--cbg,var(--paper-raised));}
+  .total-card[data-cat].dim{opacity:.45;}
   .total-card .label{
     font-size:11px;
     text-transform:uppercase;
@@ -569,7 +572,7 @@ function buildCategoryUI(){
     CATEGORIES.map(c=>c.label).join(' · ');
 
   document.getElementById('totals').innerHTML = CATEGORIES.map(c=>`
-    <div class="total-card" style="--c:${c.color};">
+    <div class="total-card" data-cat="${c.id}" style="--c:${c.color};--cbg:${c.bg};">
       <div class="label">${c.label}</div>
       <div class="amount" id="total-${c.id}">0,00 €</div>
     </div>`).join('') + `
@@ -701,6 +704,10 @@ function populateMonthFilter(){
   }
 }
 
+// Filtre par categorie : cliquer sur une carte la selectionne (plusieurs possibles),
+// aucune selection = tout afficher. Les exports ne sont pas concernes.
+let selectedCats = new Set();
+
 function render(){
   const list = document.getElementById('list');
   updateBackupReminder();
@@ -711,30 +718,43 @@ function render(){
     ? entries
     : entries.filter(e=>monthKeyISO(e.date) === selectedMonth);
 
-  // Les totaux reflètent le périmètre affiché (mois filtré ou tout)
+  // Une categorie supprimee ne peut plus rester selectionnee.
+  selectedCats = new Set([...selectedCats].filter(id=>CATEGORIES.some(c=>c.id === id)));
+  const filtering = selectedCats.size > 0;
+
+  // Les cartes par categorie reflètent le mois filtré (pas le filtre categorie).
   for(const c of CATEGORIES){
     const sum = visible.filter(e=>e.cat === c.id).reduce((s,e)=>s+e.amount, 0);
     document.getElementById('total-'+c.id).textContent = fmt(sum);
+    const card = document.getElementById('total-'+c.id).closest('.total-card');
+    card.classList.toggle('active', selectedCats.has(c.id));
+    card.classList.toggle('dim', filtering && !selectedCats.has(c.id));
   }
-  // Total general calcule sur TOUTES les entrees visibles, pas sur la somme des
+
+  // Ce qui est affiche : le mois, puis les categories choisies.
+  const shown = filtering ? visible.filter(e=>selectedCats.has(e.cat)) : visible;
+
+  // Total general calcule sur les entrees affichees, pas sur la somme des
   // categories : ainsi un ticket portant une categorie inconnue reste compte.
-  const grand = visible.reduce((s,e)=>s+e.amount, 0);
+  const grand = shown.reduce((s,e)=>s+e.amount, 0);
   document.getElementById('total-grand').textContent = fmt(grand);
+  const grandCard = document.getElementById('total-grand').closest('.total-card');
+  grandCard.classList.toggle('filtered', filtering);
   document.getElementById('grandLabel').textContent =
-    visible.length === 1 ? 'Total · 1 ticket' : `Total · ${visible.length} tickets`;
+    (shown.length === 1 ? 'Total · 1 ticket' : `Total · ${shown.length} tickets`) + (filtering ? ' · filtré ✕' : '');
 
   if(entries.length === 0){
     list.innerHTML = `<div class="empty-state"><div class="icon">🧾</div><p>Aucun ticket enregistré</p><p>Appuie sur "Nouveau ticket" pour commencer</p></div>`;
     return;
   }
-  if(visible.length === 0){
-    list.innerHTML = `<div class="empty-state"><div class="icon">📅</div><p>Aucun ticket pour ce mois</p></div>`;
+  if(shown.length === 0){
+    list.innerHTML = `<div class="empty-state"><div class="icon">📅</div><p>${filtering ? 'Aucun ticket pour ce filtre' : 'Aucun ticket pour ce mois'}</p></div>`;
     return;
   }
 
   let html = '';
   let lastMonth = null;
-  for(const e of visible){
+  for(const e of shown){
     const mk = monthKey(e.date);
     if(mk !== lastMonth){
       html += `<div class="month-label">${mk}</div>`;
@@ -2042,7 +2062,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.6.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
@@ -2586,6 +2606,20 @@ document.getElementById('cloudBtn').addEventListener('click', async ()=>{
       showToast('Connexion impossible — ' + (e.code || 'erreur'));
     }
   }
+});
+
+document.getElementById('totals').addEventListener('click', (ev)=>{
+  const card = ev.target.closest('.total-card');
+  if(!card) return;
+  if(card.dataset.cat){
+    if(selectedCats.has(card.dataset.cat)) selectedCats.delete(card.dataset.cat);
+    else selectedCats.add(card.dataset.cat);
+  }else if(selectedCats.size){
+    selectedCats.clear(); // carte « Total · filtré ✕ » : tout afficher
+  }else{
+    return;
+  }
+  render();
 });
 
 loadCustomCats();
