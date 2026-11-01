@@ -6,7 +6,8 @@ Petite appli web pour enregistrer ses notes de frais : on photographie un ticket
 
 - **Un seul fichier : `index.html`** (~1900 lignes) avec HTML, CSS et JS. Pas de build, pas de `package.json`, pas de framework. On modifie le fichier directement.
 - **Hébergement : GitHub Pages**, servi depuis la branche `main` à la racine. Un push sur `main` met l'appli en ligne en une minute ou deux.
-- **Données : 100 % locales**, dans IndexedDB du navigateur (base `notesFraisDB`, store `tickets`, version 1). Aucun serveur, aucun compte. Les photos sont stockées compressées avec le ticket.
+- **Données : IndexedDB du navigateur** (base `notesFraisDB`, store `tickets`, version 1), toujours la source locale (l'appli marche hors ligne). Les photos sont stockées compressées avec le ticket.
+- **Synchronisation (v2.0.0+)** : Firebase (projet `notes-frais-fac8e`, connexion Google, Firestore). Chaque ticket est copié dans `users/<uid>/tickets/<id>` ; règles de sécurité côté console Firebase (chaque utilisateur n'accède qu'à `users/<son uid>`). Code dans la section « Synchronisation Firebase » de `index.html` (`cloudPut`, `cloudDelete`, `applyRemote`). Un document Firestore est limité à ~1 Mo : la photo compressée doit tenir dedans. La clé `firebaseConfig` n'est pas secrète.
 - **Librairies chargées depuis jsDelivr** (internet requis) :
   - `tesseract.js@4.1.1` (OCR, langue `fra`)
   - `jspdf@2.5.1` (export PDF)
