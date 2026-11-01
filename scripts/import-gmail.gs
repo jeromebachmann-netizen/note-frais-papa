@@ -7,6 +7,7 @@
  *   - Free Mobile    : texte du mail "facture disponible" -> Télécom
  *   - Freebox        : texte du mail "facture disponible" -> Télécom
  *   - Anthropic      : texte du mail Stripe "Your receipt" -> Autre
+ *   - Ulys (péage)   : texte du mail "facture télépéage"  -> Péage (daté du dernier jour du mois facturé)
  *
  * Réglages (Paramètres du projet > Propriétés du script) :
  *   SA_KEY : contenu complet du fichier JSON de la clé de compte de service Firebase
@@ -30,6 +31,8 @@ const SOURCES = [
     query: 'from:freemobile@free-mobile.fr subject:facture', parse: parseFreeMobile },
   { nom: 'Freebox',     cat: 'telecom', place: 'Freebox',
     query: 'from:info-abonne@freetelecom.fr subject:facture', parse: parseFreebox },
+  { nom: 'Ulys',        cat: 'toll',    place: 'Ulys',
+    query: 'from:noreply@facturation2.vinci-autoroutes.com subject:facture', parse: parseUlys },
   { nom: 'Anthropic',   cat: 'other',   place: 'Anthropic', pj: true,
     query: 'subject:"Your receipt from Anthropic"', parse: parseAnthropic },
 ];
@@ -156,6 +159,17 @@ function parseFreebox(t){
   const mo = d && mois_(d[2]);
   return d && m && mo ? { date: iso_(d[1], mo, d[3]), amount: nombre_(m[1]) } : null;
 }
+// Ulys : "mois facturé : Septembre montant de la facture : 52.80€". Le mail ne donne pas de jour :
+// on date le ticket du dernier jour du mois facturé (annee deduite de la date du mail).
+function parseUlys(t, dateMail){
+  const m = t.match(/mois factur[ée]\s*:?\s*([A-Za-zÀ-ÿ]+)[\s\S]{0,60}?montant de la facture\s*:?\s*([\d\s.,]+?)\s*€/i);
+  const mo = m && mois_(m[1]);
+  if(!m || !mo || !dateMail) return null;
+  let annee = dateMail.getFullYear();
+  if(mo > dateMail.getMonth() + 1) annee--; // ex. facture de decembre recue en janvier
+  const dernier = new Date(Date.UTC(annee, mo, 0)).getUTCDate();
+  return { date: iso_(dernier, mo, annee), amount: nombre_(m[2]) };
+}
 function parseAnthropic(t){
   const m = t.match(/€\s*([\d.,]+)\s*Paid (?:on )?([A-Za-z]+) (\d{1,2}), (\d{4})/);
   const n = t.match(/Receipt #(\d{4}-\d{4})/);
@@ -165,7 +179,7 @@ function parseAnthropic(t){
 
 // Texte brut du mail, puis, si besoin, version HTML sans balises.
 function lireTexte_(msg, parse){
-  return parse(msg.getPlainBody()) || parse(htmlEnTexte_(msg.getBody()));
+  return parse(msg.getPlainBody(), msg.getDate()) || parse(htmlEnTexte_(msg.getBody()), msg.getDate());
 }
 function htmlEnTexte_(h){
   return h.replace(/<(style|script)[\s\S]*?<\/\1>/gi,' ').replace(/<[^>]+>/g,' ')
