@@ -101,6 +101,15 @@
   .list{
     padding:8px 16px 20px;
   }
+  .receipt-row{
+    display:flex;gap:10px;align-items:flex-start;padding:10px 0;
+    border-bottom:1px solid var(--line);font-size:14px;
+  }
+  .receipt-row input{width:22px;height:22px;margin-top:2px;flex-shrink:0;}
+  .receipt-row.dup{opacity:.55;}
+  .receipt-row .r-main{flex:1;min-width:0;}
+  .receipt-row .r-sub{font-size:12.5px;color:var(--muted);}
+  .receipt-row .r-amt{font-weight:700;white-space:nowrap;}
   .cloud-row{margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   .cloud-btn{
     min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);
@@ -365,6 +374,10 @@
     Exporter la sauvegarde
     <span class="desc">Télécharge un fichier .json à transférer sur un autre appareil</span>
   </button>
+  <button id="doReceipts">
+    📥 Importer des reçus (PDF)
+    <span class="desc">Lit les reçus carburant en PDF reçus par mail, tu valides avant l'ajout</span>
+  </button>
   <button id="doImport">
     Importer une sauvegarde
     <span class="desc">Charge un fichier .json exporté depuis ton tel ou PC</span>
@@ -410,6 +423,17 @@
   <div class="sheet-actions">
     <button class="btn-cancel" id="cancelBtn">Annuler</button>
     <button class="btn-save" id="saveBtn">Enregistrer</button>
+  </div>
+</div>
+
+<input type="file" id="receiptInput" accept="application/pdf" multiple style="display:none;">
+<div class="sheet" id="receiptSheet">
+  <h2>Reçus à valider</h2>
+  <div class="sub" id="receiptSummary" style="margin-bottom:8px;"></div>
+  <div id="receiptList"></div>
+  <div class="sheet-actions">
+    <button class="btn-cancel" id="receiptCancelBtn">Annuler</button>
+    <button class="btn-save" id="receiptConfirmBtn">Importer</button>
   </div>
 </div>
 
@@ -783,7 +807,7 @@ function closeSheet(){
 
 document.getElementById('addBtn').addEventListener('click', ()=> openSheet());
 document.getElementById('cancelBtn').addEventListener('click', closeSheet);
-overlay.addEventListener('click', ()=>{ closeSheet(); closeBackupMenu(); closeExportSheet(); });
+overlay.addEventListener('click', ()=>{ closeSheet(); closeBackupMenu(); closeExportSheet(); closeReceiptSheet(); });
 
 // --- Backup menu (export/import JSON pour synchro tel/PC) ---
 const backupMenu = document.getElementById('backupMenu');
@@ -1983,7 +2007,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
@@ -2009,6 +2033,147 @@ document.getElementById('refreshBtn').addEventListener('click', async (ev)=>{
   }
   // Rechargement avec un parametre unique pour forcer le navigateur a ignorer son cache.
   setTimeout(()=>{ location.replace(location.pathname + '?v=' + Date.now()); }, 700);
+});
+
+// ---------- Import de recus PDF (carburant Esso / Certas) ----------
+// Les recus numeriques sont de vrais PDF texte : on lit le texte avec pdf.js
+// (pas d'OCR). Seuls les recus de IMPORT_YEAR sont proposes.
+const IMPORT_YEAR = '2026';
+const PDFJS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+const PDFJS_WORKER_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+// Texte -> ticket, ou null si le format n'est pas reconnu.
+function parseReceiptText(text){
+  const lines = text.split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean);
+  const dm = text.match(/Date\s+(\d{2})-(\d{2})-(\d{4})/);
+  const am = text.match(/TOT\s*TTC\s*€?\s*([\d]+(?:[.,]\d{1,2})?)/);
+  if(!dm || !am) return null;
+  const amount = parseFloat(am[1].replace(',', '.'));
+  if(!(amount > 0)) return null;
+  const tm = text.match(/No\.?\s*ticket\s+(\d+)/);
+  const fm = text.match(/Pompe\s+\d+\s+(.+)/);
+  const vm = text.match(/Volume\s+([\d.,]+)\s*L/);
+  // Les deux premieres lignes : enseigne, puis code postal + ville.
+  const place = lines[0] && !/^TVA|^Date/i.test(lines[0]) ? lines[0] : '';
+  const address = lines[1] && /^\d{5}\s/.test(lines[1]) ? lines[1] : '';
+  return {
+    date: dm[3] + '-' + dm[2] + '-' + dm[1],
+    amount: amount,
+    place: place,
+    address: address,
+    receiptNo: tm ? tm[1] : null,
+    fuel: fm ? fm[1].trim() : '',
+    liters: vm ? vm[1] : ''
+  };
+}
+
+async function readPdfText(file){
+  await loadScript(PDFJS_URL, ()=> !!window.pdfjsLib);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+  const pdf = await window.pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+  let out = '';
+  for(let i = 1; i <= pdf.numPages; i++){
+    const content = await (await pdf.getPage(i)).getTextContent();
+    // On regroupe les morceaux de texte par ligne (meme hauteur), de gauche a droite.
+    const rows = new Map();
+    for(const it of content.items){
+      const y = Math.round(it.transform[5]);
+      if(!rows.has(y)) rows.set(y, []);
+      rows.get(y).push(it);
+    }
+    [...rows.keys()].sort((a,b)=>b-a).forEach(y=>{
+      out += rows.get(y).sort((a,b)=>a.transform[4]-b.transform[4]).map(i=>i.str).join(' ') + '\n';
+    });
+  }
+  return out;
+}
+
+// Deja present : meme numero de ticket, ou (anciens tickets sans numero) meme date et meme montant.
+function isKnownReceipt(r, seen){
+  if(r.receiptNo && seen.has(r.receiptNo)) return true;
+  return entries.some(e=>
+    (r.receiptNo && e.receiptNo === r.receiptNo) ||
+    (!e.receiptNo && e.date === r.date && Math.abs(e.amount - r.amount) < 0.005));
+}
+
+const receiptSheet = document.getElementById('receiptSheet');
+let pendingReceipts = [];
+function closeReceiptSheet(){
+  overlay.classList.remove('show');
+  receiptSheet.classList.remove('show');
+}
+
+document.getElementById('doReceipts').addEventListener('click', ()=>{
+  closeBackupMenu();
+  document.getElementById('receiptInput').click();
+});
+
+document.getElementById('receiptInput').addEventListener('change', async (ev)=>{
+  const files = [...ev.target.files];
+  ev.target.value = '';
+  if(files.length === 0) return;
+  showToast('Lecture des reçus…');
+  const seen = new Set();
+  const rows = [];
+  let unreadable = 0, otherYear = 0;
+  for(const f of files){
+    let r = null;
+    try{ r = parseReceiptText(await readPdfText(f)); }
+    catch(e){ console.error('PDF', f.name, e); }
+    if(!r){ unreadable++; continue; }
+    if(!r.date.startsWith(IMPORT_YEAR)){ otherYear++; continue; }
+    r.dup = isKnownReceipt(r, seen);
+    if(r.receiptNo) seen.add(r.receiptNo);
+    rows.push(r);
+  }
+  rows.sort((a,b)=> b.date.localeCompare(a.date));
+  pendingReceipts = rows;
+  const fresh = rows.filter(r=>!r.dup).length;
+  const notes = [];
+  if(rows.length - fresh) notes.push((rows.length - fresh) + ' déjà importé(s)');
+  if(otherYear) notes.push(otherYear + ' hors ' + IMPORT_YEAR);
+  if(unreadable) notes.push(unreadable + ' illisible(s)');
+  document.getElementById('receiptSummary').textContent =
+    fresh + ' nouveau(x) reçu(s)' + (notes.length ? ' · ' + notes.join(' · ') : '');
+  document.getElementById('receiptList').innerHTML = rows.map((r,i)=>`
+    <label class="receipt-row${r.dup?' dup':''}">
+      <input type="checkbox" data-i="${i}" ${r.dup?'disabled':'checked'}>
+      <div class="r-main">
+        <div>${escapeHtml(fmtDate(r.date))} · ${escapeHtml(r.place || 'Lieu inconnu')}</div>
+        <div class="r-sub">${escapeHtml([r.address, r.fuel, r.liters && r.liters + ' L', r.dup && 'déjà importé'].filter(Boolean).join(' · '))}</div>
+      </div>
+      <div class="r-amt">${fmt(r.amount)}</div>
+    </label>`).join('');
+  document.getElementById('receiptConfirmBtn').style.display = fresh ? '' : 'none';
+  if(rows.length === 0){
+    showToast(unreadable ? 'Aucun reçu lisible' : 'Aucun reçu de ' + IMPORT_YEAR);
+    return;
+  }
+  overlay.classList.add('show');
+  receiptSheet.classList.add('show');
+});
+
+document.getElementById('receiptCancelBtn').addEventListener('click', closeReceiptSheet);
+
+document.getElementById('receiptConfirmBtn').addEventListener('click', async ()=>{
+  const picked = [...document.querySelectorAll('#receiptList input:checked')]
+    .map(c=>pendingReceipts[+c.dataset.i]);
+  closeReceiptSheet();
+  if(picked.length === 0) return;
+  for(const r of picked){
+    await saveEntry({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      cat: 'fuel',
+      amount: r.amount,
+      date: r.date,
+      place: r.place,
+      address: r.address,
+      receiptNo: r.receiptNo,
+      photo: null
+    });
+  }
+  await loadEntries();
+  showToast(picked.length + ' ticket(s) ajouté(s)');
 });
 
 // ---------- Synchronisation Firebase ----------
