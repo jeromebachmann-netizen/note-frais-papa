@@ -14,7 +14,9 @@
  *
  * Fonctions à lancer :
  *   testSansEcrire : lit les mails et AFFICHE ce qui serait ajouté (rien n'est écrit)
- *   importer       : ajoute les tickets dans la base (à brancher sur un déclencheur quotidien)
+ *   importer       : ajoute les tickets dans la base (à brancher sur un déclencheur hebdomadaire)
+ *   testJustificatifs / ajouterJustificatifs : ajoute le PDF (1re page en image) aux tickets
+ *                    Esso et Anthropic deja crees sans justificatif (a lancer une fois)
  */
 
 const PROJECT_ID = 'notes-frais-fac8e';
@@ -22,13 +24,13 @@ const ANNEE = '2026';
 const LABEL = 'NotesFrais-importé'; // etiquette posée sur les mails déjà traités
 
 const SOURCES = [
-  { nom: 'Esso',        cat: 'fuel',    pdf: true,
+  { nom: 'Esso',        cat: 'fuel',    pdf: true, pj: true,
     query: 'from:essonoreply@club-certas.com has:attachment', parse: parseEsso },
   { nom: 'Free Mobile', cat: 'telecom', place: 'Free Mobile',
     query: 'from:freemobile@free-mobile.fr subject:facture', parse: parseFreeMobile },
   { nom: 'Freebox',     cat: 'telecom', place: 'Freebox',
     query: 'from:info-abonne@freetelecom.fr subject:facture', parse: parseFreebox },
-  { nom: 'Anthropic',   cat: 'other',   place: 'Anthropic',
+  { nom: 'Anthropic',   cat: 'other',   place: 'Anthropic', pj: true,
     query: 'subject:"Your receipt from Anthropic"', parse: parseAnthropic },
 ];
 
@@ -62,9 +64,9 @@ function run_(dry){
           id: 'mail_' + msg.getId(),
           cat: src.cat, amount: r.amount, date: r.date,
           place: r.place || src.place || '', address: r.address || '',
-          receiptNo: recu, photo: null
+          receiptNo: recu, photo: src.pj ? justificatif_(msg) : null
         };
-        Logger.log((dry ? 'A AJOUTER ' : 'AJOUT ') + JSON.stringify(ticket));
+        Logger.log((dry ? 'A AJOUTER ' : 'AJOUT ') + JSON.stringify(Object.assign({}, ticket, {photo: ticket.photo ? 'image ' + Math.round(ticket.photo.length/1000) + ' Ko' : null})));
         if(!dry){ ecrireTicket_(ticket); existants.numeros.add(recu); existants.liste.push({date:r.date, amount:r.amount, receiptNo:recu}); }
         ajoutes++;
       }
@@ -72,6 +74,67 @@ function run_(dry){
     }
   }
   Logger.log((dry ? 'Simulation : ' : 'Termine : ') + ajoutes + ' ticket(s)');
+}
+
+// ---------- Justificatifs (PDF joint -> image de la 1re page) ----------
+const PHOTO_MAX = 800000; // un document Firestore est limite a ~1 Mo
+
+// Le PDF a envoyer : celui dont le nom commence par "Receipt" (Anthropic), sinon le premier.
+function pdfDuMail_(msg){
+  const pdfs = msg.getAttachments().filter(a=>a.getContentType() === 'application/pdf');
+  return pdfs.find(a=>/^receipt/i.test(a.getName())) || pdfs[0] || null;
+}
+
+// Convertit la 1re page d'un PDF en image (miniature Google Drive), en data URL.
+function pdfEnImage_(blob){
+  const f = Drive.Files.create({name:'tmp-justificatif', mimeType:'application/pdf'}, blob, {fields:'id'});
+  try{
+    let lien = null;
+    for(let i = 0; i < 6 && !lien; i++){
+      Utilities.sleep(1500);
+      lien = Drive.Files.get(f.id, {fields:'thumbnailLink'}).thumbnailLink;
+    }
+    if(!lien) return null;
+    for(const taille of [1000, 700]){
+      const rep = UrlFetchApp.fetch(lien.replace(/=s\d+$/, '=s' + taille), {headers:{Authorization:'Bearer ' + ScriptApp.getOAuthToken()}});
+      const url = 'data:' + rep.getBlob().getContentType() + ';base64,' + Utilities.base64Encode(rep.getBlob().getBytes());
+      if(url.length <= PHOTO_MAX) return url;
+    }
+    return null;
+  }finally{
+    Drive.Files.remove(f.id);
+  }
+}
+
+function justificatif_(msg){
+  try{
+    const pdf = pdfDuMail_(msg);
+    return pdf ? pdfEnImage_(pdf) : null;
+  }catch(e){ Logger.log('JUSTIFICATIF impossible : ' + e); return null; }
+}
+
+// A lancer une fois : ajoute le justificatif aux tickets du script qui n'en ont pas.
+function testJustificatifs(){ justificatifs_(true); }
+function ajouterJustificatifs(){ justificatifs_(false); }
+
+function justificatifs_(dry){
+  const sansPhoto = lireSansPhoto_();
+  Logger.log('Tickets sans justificatif dans la base : ' + sansPhoto.size);
+  let n = 0;
+  for(const src of SOURCES.filter(s=>s.pj)){
+    for(const thread of GmailApp.search(src.query + ' after:' + ANNEE + '/01/01', 0, 100)){
+      for(const msg of thread.getMessages()){
+        const id = 'mail_' + msg.getId();
+        if(!sansPhoto.has(id)) continue;
+        const photo = justificatif_(msg);
+        if(!photo){ Logger.log('PAS DE JUSTIFICATIF ' + src.nom + ' ' + id); continue; }
+        Logger.log((dry ? 'A COMPLETER ' : 'COMPLETE ') + src.nom + ' ' + id + ' (image ' + Math.round(photo.length/1000) + ' Ko)');
+        if(!dry) ajouterPhoto_(id, photo);
+        n++;
+      }
+    }
+  }
+  Logger.log((dry ? 'Simulation : ' : 'Termine : ') + n + ' justificatif(s)');
 }
 
 // ---------- Lecture des mails ----------
@@ -188,10 +251,29 @@ function lireExistants_(){
   return {liste, numeros};
 }
 
+// Identifiants des tickets dont le justificatif est vide (on ne lit que les noms, pas les photos).
+function lireSansPhoto_(){
+  const rep = UrlFetchApp.fetch(base_() + ':runQuery', {method:'post', contentType:'application/json', headers:auth_(),
+    payload: JSON.stringify({structuredQuery:{from:[{collectionId:'tickets'}],
+      select:{fields:[{fieldPath:'date'}]},
+      where:{fieldFilter:{field:{fieldPath:'photo'}, op:'EQUAL', value:{nullValue:null}}}}})});
+  const ids = new Set();
+  for(const r of JSON.parse(rep.getContentText())){
+    if(r.document) ids.add(r.document.name.split('/').pop());
+  }
+  return ids;
+}
+
+function ajouterPhoto_(id, photo){
+  UrlFetchApp.fetch(base_() + '/tickets/' + id + '?updateMask.fieldPaths=photo&currentDocument.exists=true',
+    {method:'patch', contentType:'application/json', headers:auth_(),
+     payload: JSON.stringify({fields:{photo:{stringValue:photo}}})});
+}
+
 function ecrireTicket_(t){
   const champs = {
     id:{stringValue:t.id}, cat:{stringValue:t.cat}, amount:{doubleValue:t.amount}, date:{stringValue:t.date},
-    place:{stringValue:t.place}, address:{stringValue:t.address}, receiptNo:{stringValue:t.receiptNo}, photo:{nullValue:null}
+    place:{stringValue:t.place}, address:{stringValue:t.address}, receiptNo:{stringValue:t.receiptNo}, photo: t.photo ? {stringValue:t.photo} : {nullValue:null}
   };
   UrlFetchApp.fetch(base_() + '/tickets/' + t.id, {method:'patch', contentType:'application/json', headers:auth_(),
     payload: JSON.stringify({fields: champs})});

@@ -2042,7 +2042,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.5.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
@@ -2212,6 +2212,11 @@ document.getElementById('pdfInput').addEventListener('change', async (ev)=>{
     const {text, image} = await readPdfFull(file);
     currentPhotoData = image;
     document.getElementById('photoLabel').innerHTML = `<img src="${image}">Facture chargée — appuie pour changer`;
+    if(editingId){
+      // Ticket deja enregistre : on ajoute seulement le justificatif, sans toucher aux champs.
+      statusEl.textContent = '✓ Facture ajoutée comme justificatif — enregistre pour la conserver';
+      return;
+    }
     let body = text;
     if(body.replace(/\s/g,'').length < 40){
       // PDF scanne (une image) : pas de texte, on tente l'OCR sur la page.
