@@ -101,6 +101,12 @@
   .list{
     padding:8px 16px 20px;
   }
+  .cloud-row{margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .cloud-btn{
+    min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);
+    background:var(--paper-raised);color:var(--accent);font-size:14px;font-weight:600;cursor:pointer;
+  }
+  .cloud-status{font-size:12.5px;color:var(--muted);}
   .backup-reminder{
     display:none;margin:10px 20px 0;padding:12px 14px;
     background:#fff6e0;border:1px solid #e3c877;border-radius:10px;
@@ -317,6 +323,10 @@
     </div>
   </div>
   <div class="sub" id="subtitle"></div>
+  <div class="cloud-row">
+    <button class="cloud-btn" id="cloudBtn">☁ Se connecter</button>
+    <span class="cloud-status" id="cloudStatus"></span>
+  </div>
 </div>
 
 <!-- Les cartes de totaux sont generees depuis CATEGORIES (voir buildCategoryUI). -->
@@ -438,6 +448,9 @@
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 const DB_NAME = 'notesFraisDB';
 const DB_VERSION = 1;
@@ -568,7 +581,7 @@ async function saveEntry(entry){
   return new Promise((resolve, reject)=>{
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).put(entry);
-    tx.oncomplete = ()=>{ noteChange(); resolve(); };
+    tx.oncomplete = ()=>{ noteChange(); cloudPut(entry); resolve(); };
     tx.onerror = ()=> reject(tx.error);
   });
 }
@@ -578,7 +591,7 @@ async function deleteEntry(id){
   await new Promise((resolve, reject)=>{
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).delete(id);
-    tx.oncomplete = ()=>{ noteChange(); resolve(); };
+    tx.oncomplete = ()=>{ noteChange(); cloudDelete(id); resolve(); };
     tx.onerror = ()=> reject(tx.error);
   });
   entries = entries.filter(e=>e.id !== id);
@@ -598,6 +611,7 @@ async function importEntries(newEntries){
         // qu'il reste visible et compte dans les totaux.
         if(!knownIds.includes(e.cat)) e.cat = CATEGORIES[CATEGORIES.length-1].id;
         store.put(e);
+        cloudPut(e);
       }
     }
     tx.oncomplete = ()=> resolve();
@@ -1969,7 +1983,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '2.0.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
@@ -1997,8 +2011,125 @@ document.getElementById('refreshBtn').addEventListener('click', async (ev)=>{
   setTimeout(()=>{ location.replace(location.pathname + '?v=' + Date.now()); }, 700);
 });
 
+// ---------- Synchronisation Firebase ----------
+// Les tickets restent dans IndexedDB (l'appli marche hors ligne) et sont aussi
+// copies dans Firestore, sous users/<uid>/tickets/<id>, pour etre retrouves sur
+// un autre appareil. Chaque utilisateur ne voit que ses propres donnees
+// (regles de securite cote Firebase).
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBYhdoWfnVFwXvc2uXSH_9U1vD75_L-k4o",
+  authDomain: "notes-frais-fac8e.firebaseapp.com",
+  projectId: "notes-frais-fac8e",
+  storageBucket: "notes-frais-fac8e.firebasestorage.app",
+  messagingSenderId: "288469568165",
+  appId: "1:288469568165:web:ae2c1a6f19ebec8408db4c"
+};
+const MAX_CLOUD_DOC = 950000; // Firestore limite un document a ~1 Mo
+
+let fbDb = null;
+let cloudCol = null;
+let cloudUnsub = null;
+let cloudUser = null;
+let cloudWarned = false;
+
+function setCloudUI(status){
+  const btn = document.getElementById('cloudBtn');
+  btn.textContent = cloudUser ? '☁ Déconnexion' : '☁ Se connecter';
+  document.getElementById('cloudStatus').textContent =
+    status || (cloudUser ? 'Synchronisé · ' + (cloudUser.email || '') : 'Données uniquement sur cet appareil');
+}
+
+function cloudPut(entry){
+  if(!cloudCol) return;
+  const data = JSON.parse(JSON.stringify(entry)); // retire les undefined
+  if(JSON.stringify(data).length > MAX_CLOUD_DOC){
+    showToast('Photo trop lourde pour la synchronisation');
+    return;
+  }
+  cloudCol.doc(String(entry.id)).set(data).catch(err=>{
+    console.error('Sync', err);
+    if(!cloudWarned){ cloudWarned = true; showToast('Synchronisation impossible — ' + (err.code || 'erreur')); }
+  });
+}
+
+function cloudDelete(id){
+  if(!cloudCol) return;
+  cloudCol.doc(String(id)).delete().catch(err=>console.error('Sync', err));
+}
+
+// Applique dans IndexedDB les changements venus du cloud (autre appareil).
+async function applyRemote(snap){
+  const changes = snap.docChanges().filter(c=>!c.doc.metadata.hasPendingWrites);
+  if(changes.length === 0) return;
+  if(!db) db = await openDB();
+  await new Promise((resolve, reject)=>{
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    for(const c of changes){
+      if(c.type === 'removed') store.delete(c.doc.id);
+      else store.put(c.doc.data());
+    }
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+  await loadEntries();
+}
+
+async function onAuthChange(user){
+  if(cloudUnsub){ cloudUnsub(); cloudUnsub = null; }
+  cloudCol = null;
+  cloudUser = user;
+  setCloudUI();
+  if(!user) return;
+  cloudCol = fbDb.collection('users').doc(user.uid).collection('tickets');
+  // Premiere connexion sur cet appareil : on envoie les tickets deja presents.
+  const flag = 'cloudInit_' + user.uid;
+  if(lsGet(flag) !== '1'){
+    setCloudUI('Envoi des tickets…');
+    entries.forEach(cloudPut);
+    lsSet(flag, '1');
+  }
+  cloudUnsub = cloudCol.onSnapshot(snap=>{
+    applyRemote(snap).catch(e=>console.error('Sync', e));
+    setCloudUI();
+  }, err=>{
+    console.error('Sync', err);
+    setCloudUI('Synchronisation impossible (' + (err.code || 'erreur') + ')');
+  });
+}
+
+function initCloud(){
+  if(typeof firebase === 'undefined'){
+    setCloudUI('Synchronisation indisponible (hors ligne)');
+    return;
+  }
+  firebase.initializeApp(FIREBASE_CONFIG);
+  fbDb = firebase.firestore();
+  fbDb.enablePersistence({synchronizeTabs:true}).catch(()=>{});
+  firebase.auth().onAuthStateChanged(onAuthChange);
+}
+
+document.getElementById('cloudBtn').addEventListener('click', async ()=>{
+  if(typeof firebase === 'undefined'){
+    showToast('Connexion impossible : pas de réseau');
+    return;
+  }
+  if(cloudUser){
+    if(confirm('Se déconnecter ? Les tickets restent sur cet appareil.')) firebase.auth().signOut();
+    return;
+  }
+  try{
+    await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  }catch(e){
+    if(e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request'){
+      showToast('Connexion impossible — ' + (e.code || 'erreur'));
+    }
+  }
+});
+
 buildCategoryUI();
-loadEntries();
+setCloudUI();
+loadEntries().then(initCloud);
 </script>
 </body>
 </html>
