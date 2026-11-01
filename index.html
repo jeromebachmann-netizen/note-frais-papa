@@ -475,6 +475,7 @@
 
 <div class="sheet" id="exportSheet">
   <h2 id="exportTitle">Exporter</h2>
+  <div class="sub" id="exportFilterNote" style="margin:-8px 0 12px;"></div>
 
   <div class="field">
     <label>Période à exporter</label>
@@ -707,6 +708,9 @@ function populateMonthFilter(){
 // Filtre par categorie : cliquer sur une carte la selectionne (plusieurs possibles),
 // aucune selection = tout afficher. Les exports ne sont pas concernes.
 let selectedCats = new Set();
+function selectedCatsLabel(){
+  return CATEGORIES.filter(c=>selectedCats.has(c.id)).map(c=>c.label).join(', ');
+}
 
 function render(){
   const list = document.getElementById('list');
@@ -1976,6 +1980,10 @@ function openExportSheet(format){
     format === 'pdf'  ? 'Exporter le PDF justificatifs' :
     format === 'csv'  ? 'Exporter le CSV' :
                         'Exporter le fichier Excel';
+  // Le filtre par categorie de l'ecran principal s'applique aussi a l'export.
+  document.getElementById('exportFilterNote').textContent = selectedCats.size
+    ? 'Filtre actif : ' + selectedCatsLabel() + ' — seuls ces tickets seront exportés'
+    : '';
   // Réinitialise les modes
   document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active', b.dataset.mode==='all'));
   document.getElementById('exportMonthField').style.display = 'none';
@@ -2044,6 +2052,12 @@ document.getElementById('exportConfirmBtn').addEventListener('click', async ()=>
     periodLabel = `${fmtDate(from)} au ${fmtDate(to)}`;
   }
 
+  // Filtre par categorie (cartes de totaux) : meme perimetre que l'ecran.
+  if(selectedCats.size){
+    list = list.filter(e=>selectedCats.has(e.cat));
+    periodLabel = (periodLabel || 'Toutes périodes') + ' — ' + selectedCatsLabel();
+  }
+
   closeExportSheet();
   if(exportFormat === 'pdf'){
     await generatePDF(list, periodLabel);
@@ -2062,7 +2076,7 @@ document.getElementById('monthFilter').addEventListener('change', (ev)=>{
 // ---------- Version & mise a jour ----------
 // A incrementer a chaque nouveaute mise en ligne : c'est ce numero que le
 // bouton ↻ compare avec la version publiee sur le site.
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.7.0';
 
 document.getElementById('versionLabel').textContent = 'v' + APP_VERSION;
 
